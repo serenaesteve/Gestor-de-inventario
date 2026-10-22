@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Control de acceso · Almacén</title>
+  <meta name="description" content="Entrada al gestor de inventario">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23f2c500'/%3E%3Cpath d='M16 7l8 4.5v9L16 25l-8-4.5v-9z' fill='none' stroke='%23161512' stroke-width='2.4' stroke-linejoin='round'/%3E%3Cpath d='M8 11.5l8 4.5 8-4.5M16 16v9' fill='none' stroke='%23161512' stroke-width='2.4' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script>
+    try { const t = localStorage.getItem('inventario.tema'); if (t === 'claro' || t === 'oscuro') document.documentElement.dataset.tema = t; } catch {}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Martian+Mono:wdth,wght@75..112.5,400..700&display=swap">
+  <link rel="stylesheet" href="/css/estilos.css">
+  <link rel="stylesheet" href="/css/login.css">
+  <script type="module" src="/js/login.js"></script>
+</head>
+<body class="acceso">
+  <main class="acceso__marco">
+    <section class="acceso__cartel" aria-hidden="true">
+      <div class="acceso__cinta"></div>
+      <p class="acceso__aviso">Zona de almacén · Solo personal autorizado</p>
+      <p class="acceso__rotulo">Control <br>de acceso</p>
+      <p class="acceso__nave">Nave 1 · Muelles A–D</p>
+      <div class="acceso__cinta"></div>
+    </section>
+
+    <section class="acceso__tarjeta" aria-labelledby="t-acceso">
+      <div class="acreditacion">
+        <span class="acreditacion__ranura" aria-hidden="true"></span>
+        <header class="acreditacion__cabecera">
+          <span class="marca__placa" aria-hidden="true">
+            <svg class="icono" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+          </span>
+          <div>
+            <p class="acreditacion__antetitulo">Almacén · Libro de existencias</p>
+            <h1 id="t-acceso">Ficha tu entrada</h1>
+          </div>
+        </header>
+
+        <form class="acreditacion__formulario" id="form-acceso" novalidate>
+          <div class="campo">
+            <label for="acc-usuario">Usuario</label>
+            <input id="acc-usuario" name="usuario" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+            <p class="campo__error"></p>
+          </div>
+          <div class="campo">
+            <label for="acc-contrasena">Contraseña</label>
+            <div class="con-boton">
+              <input id="acc-contrasena" name="contrasena" type="password" autocomplete="current-password" required>
+              <button class="boton boton--icono boton--fantasma" type="button" id="ver-contrasena" aria-label="Mostrar la contraseña" aria-pressed="false">
+                <svg class="icono" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+            <p class="campo__error"></p>
+          </div>
+          <p class="formulario__error" role="alert"></p>
+          <button class="boton boton--senal boton--grande boton--bloque" type="submit">Entrar en el almacén</button>
+        </form>
+
+        <aside class="acreditacion__ejemplo" id="usuarios-ejemplo" hidden aria-labelledby="t-ejemplo">
+          <h2 id="t-ejemplo">Usuarios de ejemplo</h2>
+          <p>Pulsa uno para rellenar el formulario.</p>
+          <ul id="lista-ejemplo"></ul>
+        </aside>
+
+        <footer class="acreditacion__pie" aria-hidden="true">
+          <svg class="acreditacion__barras" viewBox="0 0 120 1" preserveAspectRatio="none"><rect x="4" width="2" height="1"/><rect x="8" width="1" height="1"/><rect x="11" width="3" height="1"/><rect x="16" width="1" height="1"/><rect x="19" width="2" height="1"/><rect x="23" width="1" height="1"/><rect x="26" width="3" height="1"/><rect x="31" width="2" height="1"/><rect x="35" width="1" height="1"/><rect x="38" width="1" height="1"/><rect x="41" width="3" height="1"/><rect x="46" width="2" height="1"/><rect x="50" width="1" height="1"/><rect x="53" width="2" height="1"/><rect x="57" width="3" height="1"/><rect x="62" width="1" height="1"/><rect x="65" width="2" height="1"/><rect x="69" width="1" height="1"/><rect x="72" width="3" height="1"/><rect x="77" width="1" height="1"/><rect x="80" width="2" height="1"/><rect x="84" width="1" height="1"/><rect x="87" width="3" height="1"/><rect x="92" width="2" height="1"/><rect x="96" width="1" height="1"/><rect x="99" width="2" height="1"/><rect x="103" width="3" height="1"/><rect x="108" width="1" height="1"/><rect x="111" width="2" height="1"/><rect x="115" width="1" height="1"/></svg>
+          <span>La sesión caduca a las 8 horas</span>
+        </footer>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

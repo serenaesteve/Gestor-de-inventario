@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Almacén</title>
+  <meta name="description" content="Libro de existencias: referencias, albaranes de entrada y salida, recuentos y tarjetas Kardex">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23f2c500'/%3E%3Cpath d='M16 7l8 4.5v9L16 25l-8-4.5v-9z' fill='none' stroke='%23161512' stroke-width='2.4' stroke-linejoin='round'/%3E%3Cpath d='M8 11.5l8 4.5 8-4.5M16 16v9' fill='none' stroke='%23161512' stroke-width='2.4' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script>
+    try { const t = localStorage.getItem('inventario.tema'); if (t === 'claro' || t === 'oscuro') document.documentElement.dataset.tema = t; } catch {}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Martian+Mono:wdth,wght@75..112.5,400..700&display=swap">
+  <link rel="stylesheet" href="/css/estilos.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.min.js" } }</script>
+  <script type="module" src="/js/app.js"></script>
+</head>
+<body>
+  <a class="saltar" href="#contenido">Saltar al contenido</a>
+
+  <!-- Textura de tinta para los sellos -->
+  <svg class="definiciones" aria-hidden="true" focusable="false">
+    <filter id="tinta" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7" result="ruido"/>
+      <feColorMatrix in="ruido" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -3.2 2.5" result="motas"/>
+      <feComposite in="SourceGraphic" in2="motas" operator="in"/>
+    </filter>
+  </svg>
+
+  <header class="nave">
+    <div class="nave__fila">
+      <a class="marca" href="#nave">
+        <span class="marca__placa" aria-hidden="true"><span data-icono="caja"></span></span>
+        <span class="marca__texto">
+          <span class="marca__nombre">Almacén</span>
+          <span class="marca__sub">Libro de existencias</span>
+        </span>
+      </a>
+
+      <nav class="pasillos" aria-label="Secciones">
+        <a href="#nave" data-vista="nave"><span class="pasillos__num" aria-hidden="true">01</span>Nave</a>
+        <a href="#panel" data-vista="panel"><span class="pasillos__num" aria-hidden="true">02</span>Panel</a>
+        <a href="#existencias" data-vista="existencias"><span class="pasillos__num" aria-hidden="true">03</span>Existencias</a>
+        <a href="#movimientos" data-vista="movimientos"><span class="pasillos__num" aria-hidden="true">04</span>Movimientos</a>
+      </nav>
+
+      <div class="nave__acciones">
+        <div class="usuario" id="usuario-actual" aria-label="Sesión iniciada"></div>
+        <button class="boton boton--nave boton--salir" type="button" data-accion="salir">Salir</button>
+        <button class="boton boton--icono boton--nave" type="button" data-accion="tema" aria-label="Cambiar tema"><span data-icono="tema"></span></button>
+        <button class="boton boton--senal nave__registrar" type="button" data-accion="nuevo-movimiento">
+          <span data-icono="albaran"></span>Registrar movimiento<kbd>M</kbd>
+        </button>
+      </div>
+    </div>
+    <div class="cinta" aria-hidden="true"></div>
+  </header>
+
+  <main id="contenido" class="principal" tabindex="-1">
+    <!-- ========================= 01 · NAVE EN 3D ========================= -->
+    <section class="vista vista--nave" data-vista="nave" aria-labelledby="t-nave" hidden>
+      <div class="nave3d" id="nave3d">
+        <div class="nave3d__hud">
+          <header class="nave3d__rotulo">
+            <p class="rotulo__pasillo">Pasillo 01 · Nave</p>
+            <h1 id="t-nave">La nave</h1>
+            <p class="nave3d__ayuda">Arrastra para girar · rueda o pellizco para acercarte · pulsa un hueco para ver su tarjeta Kardex</p>
+            <p class="nave3d__aviso" id="nave-aviso" hidden>
+              <strong>Modo ligero:</strong> tu navegador está dibujando el 3D sin la tarjeta gráfica, por eso va lento.
+              En Chrome, activa <em>Configuración → Sistema → Usar aceleración por hardware</em> y reinicia el navegador.
+            </p>
+          </header>
+          <dl class="nave3d__cifras" id="nave-cifras"></dl>
+        </div>
+
+        <nav class="nave3d__pasillos" id="nave-pasillos" aria-label="Ir a un pasillo de la nave"></nav>
+
+        <ul class="nave3d__leyenda" aria-label="Leyenda">
+          <li><span class="muestra muestra--ok"></span>En stock</li>
+          <li><span class="muestra muestra--bajo"></span>Bajo mínimo</li>
+          <li><span class="muestra muestra--agotado"></span>Agotado</li>
+          <li><span class="muestra muestra--caja"></span>Hueco lleno = doble del mínimo</li>
+        </ul>
+
+        <div class="nave3d__ficha" id="nave-tooltip" hidden></div>
+        <div class="nave3d__carga" id="nave-carga" role="status"><span class="nave3d__carga-barra"></span>Montando las estanterías…</div>
+        <div class="nave3d__sin-3d vacio" id="nave-sin-3d" hidden></div>
+
+        <!-- La escena es visual; su contenido completo, en texto, para lectores de pantalla -->
+        <div class="sr" id="nave-indice"></div>
+      </div>
+    </section>
+
+    <!-- =========================== 02 · PANEL =========================== -->
+    <section class="vista" data-vista="panel" aria-labelledby="t-panel" hidden>
+      <header class="rotulo">
+        <div>
+          <p class="rotulo__pasillo">Pasillo 02 · Panel</p>
+          <h1 id="t-panel">Estado del almacén</h1>
+          <p class="rotulo__sub" id="fecha-hoy"></p>
+        </div>
+      </header>
+
+      <div class="tablero" id="tablero" aria-busy="true"></div>
+
+      <div class="panel-rejilla">
+        <section class="hoja" aria-labelledby="t-reponer">
+          <header class="hoja__cabecera">
+            <h2 id="t-reponer">Para reponer</h2>
+            <a class="enlace" href="#existencias" data-accion="ver-alertas">Ver en existencias</a>
+          </header>
+          <div id="lista-reponer"></div>
+        </section>
+
+        <section class="ticket" aria-labelledby="t-ultimos">
+          <header class="ticket__cabecera">
+            <h2 id="t-ultimos">Últimos movimientos</h2>
+            <p class="ticket__sub" id="ticket-fecha"></p>
+          </header>
+          <div id="lista-ultimos"></div>
+          <a class="ticket__enlace" href="#movimientos">Abrir el libro completo →</a>
+        </section>
+      </div>
+    </section>
+
+    <!-- ======================== 02 · EXISTENCIAS ======================== -->
+    <section class="vista" data-vista="existencias" aria-labelledby="t-existencias" hidden>
+      <header class="rotulo">
+        <div>
+          <p class="rotulo__pasillo">Pasillo 03 · Existencias</p>
+          <h1 id="t-existencias">Existencias</h1>
+          <p class="rotulo__sub" id="existencias-contador" aria-live="polite">&nbsp;</p>
+        </div>
+        <div class="rotulo__acciones">
+          <a class="boton" href="/api/exportar/existencias.csv" download><span data-icono="descargar"></span>Exportar CSV</a>
+          <button class="boton boton--tinta" type="button" data-accion="nuevo-producto" data-solo-admin><span data-icono="mas"></span>Nueva referencia</button>
+        </div>
+      </header>
+
+      <div class="filtros" role="search">
+        <label class="busqueda">
+          <span data-icono="buscar"></span>
+          <span class="sr">Buscar por código o nombre</span>
+          <input type="search" id="filtro-texto" placeholder="Código o nombre…" autocomplete="off" spellcheck="false">
+          <kbd aria-hidden="true">/</kbd>
+        </label>
+        <label class="sr" for="filtro-categoria">Categoría</label>
+        <select id="filtro-categoria" class="selector">
+          <option value="">Todas las categorías</option>
+        </select>
+        <fieldset class="segmentado" id="filtro-estado">
+          <legend class="sr">Estado del stock</legend>
+          <label><input type="radio" name="estado" value="" checked><span>Todas</span></label>
+          <label><input type="radio" name="estado" value="ALERTA"><span>Para reponer</span></label>
+          <label><input type="radio" name="estado" value="AGOTADO"><span>Agotadas</span></label>
+        </fieldset>
+        <fieldset class="segmentado segmentado--iconos" id="vista-existencias">
+          <legend class="sr">Forma de ver las existencias</legend>
+          <label title="Etiquetas"><input type="radio" name="vista" value="etiquetas" checked><span><span data-icono="etiquetas"></span><span class="sr">Etiquetas</span></span></label>
+          <label title="Lista"><input type="radio" name="vista" value="lista"><span><span data-icono="lista"></span><span class="sr">Lista</span></span></label>
+        </fieldset>
+      </div>
+
+      <div class="estanteria" id="existencias-etiquetas"></div>
+
+      <div class="hoja hoja--tabla" id="existencias-lista" hidden>
+        <table class="tabla tabla--existencias">
+          <thead>
+            <tr>
+              <th scope="col">Referencia</th>
+              <th scope="col">Categoría</th>
+              <th scope="col" class="num">Precio</th>
+              <th scope="col">Existencias</th>
+              <th scope="col" class="num">Valor</th>
+              <th scope="col"><span class="sr">Acciones</span></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="vacio" id="existencias-vacio" hidden></div>
+    </section>
+
+    <!-- ======================== 03 · MOVIMIENTOS ======================== -->
+    <section class="vista" data-vista="movimientos" aria-labelledby="t-movimientos" hidden>
+      <header class="rotulo">
+        <div>
+          <p class="rotulo__pasillo">Pasillo 04 · Movimientos</p>
+          <h1 id="t-movimientos">Libro de movimientos</h1>
+          <p class="rotulo__sub" id="movimientos-contador" aria-live="polite">&nbsp;</p>
+        </div>
+      </header>
+
+      <div class="filtros">
+        <label class="sr" for="filtro-mov-producto">Referencia</label>
+        <select id="filtro-mov-producto" class="selector selector--ancho">
+          <option value="">Todas las referencias</option>
+        </select>
+        <fieldset class="segmentado" id="filtro-mov-tipo">
+          <legend class="sr">Tipo de movimiento</legend>
+          <label><input type="radio" name="tipo" value="" checked><span>Todos</span></label>
+          <label><input type="radio" name="tipo" value="ENTRADA"><span>Entradas</span></label>
+          <label><input type="radio" name="tipo" value="SALIDA"><span>Salidas</span></label>
+          <label><input type="radio" name="tipo" value="AJUSTE"><span>Recuentos</span></label>
+        </fieldset>
+      </div>
+
+      <div class="hoja hoja--tabla">
+        <table class="tabla tabla--libro" id="tabla-movimientos">
+          <thead>
+            <tr>
+              <th scope="col">Nº albarán</th>
+              <th scope="col">Fecha</th>
+              <th scope="col">Referencia</th>
+              <th scope="col">Concepto</th>
+              <th scope="col" class="num">Entrada</th>
+              <th scope="col" class="num">Salida</th>
+              <th scope="col" class="num">Saldo</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="vacio" id="movimientos-vacio" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <button class="fab" type="button" data-accion="nuevo-movimiento" aria-label="Registrar movimiento"><span data-icono="albaran"></span></button>
+
+  <!-- ===================== ALTA / EDICIÓN DE REFERENCIA ===================== -->
+  <dialog class="dialogo dialogo--ancho" id="dlg-producto" aria-labelledby="producto-titulo">
+    <form class="dialogo__marco" id="form-producto" novalidate>
+      <header class="dialogo__cabecera">
+        <div>
+          <p class="dialogo__antetitulo" id="producto-antetitulo">Ficha nueva</p>
+          <h2 id="producto-titulo">Alta de referencia</h2>
+        </div>
+        <button class="boton boton--icono boton--fantasma" type="button" data-cerrar aria-label="Cerrar"><span data-icono="cerrar"></span></button>
+      </header>
+      <div class="alta">
+        <div class="dialogo__cuerpo">
+          <input type="hidden" name="id">
+          <div class="fila-campos fila-campos--codigo">
+            <div class="campo">
+              <label for="prod-codigo">Código</label>
+              <input id="prod-codigo" name="codigo" required maxlength="30" autocomplete="off" spellcheck="false" class="mono mayusculas" placeholder="PAP-001">
+              <p class="campo__error"></p>
+            </div>
+            <div class="campo">
+              <label for="prod-nombre">Nombre</label>
+              <input id="prod-nombre" name="nombre" required maxlength="120" autocomplete="off">
+              <p class="campo__error"></p>
+            </div>
+          </div>
+          <div class="fila-campos">
+            <div class="campo">
+              <label for="prod-categoria">Categoría</label>
+              <input id="prod-categoria" name="categoria" maxlength="50" list="lista-categorias" autocomplete="off" placeholder="General">
+              <datalist id="lista-categorias"></datalist>
+              <p class="campo__error"></p>
+            </div>
+            <div class="campo">
+              <label for="prod-precio">Precio unitario</label>
+              <div class="con-sufijo">
+                <input id="prod-precio" name="precio" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0,00">
+                <span aria-hidden="true">€</span>
+              </div>
+              <p class="campo__error"></p>
+            </div>
+          </div>
+          <div class="fila-campos">
+            <div class="campo">
+              <label for="prod-minimo">Stock mínimo</label>
+              <input id="prod-minimo" name="stock_minimo" type="number" inputmode="numeric" min="0" step="1" placeholder="0" aria-describedby="prod-minimo-ayuda">
+              <p class="campo__ayuda" id="prod-minimo-ayuda">En cuanto baje de aquí, aparece en «Para reponer».</p>
+              <p class="campo__error"></p>
+            </div>
+            <div class="campo" id="campo-stock-inicial">
+              <label for="prod-inicial">Stock inicial</label>
+              <input id="prod-inicial" name="stock_inicial" type="number" inputmode="numeric" min="0" step="1" placeholder="0" aria-describedby="prod-inicial-ayuda">
+              <p class="campo__ayuda" id="prod-inicial-ayuda">Queda registrado como el primer albarán de entrada.</p>
+              <p class="campo__error"></p>
+            </div>
+          </div>
+          <p class="nota" id="nota-stock" hidden>El stock no se toca desde aquí: solo cambia con albaranes y recuentos, para que todo quede en la tarjeta Kardex.</p>
+          <div class="campo">
+            <label for="prod-descripcion">Descripción <span class="opcional">(opcional)</span></label>
+            <textarea id="prod-descripcion" name="descripcion" rows="2" maxlength="500"></textarea>
+            <p class="campo__error"></p>
+          </div>
+          <p class="formulario__error" role="alert"></p>
+        </div>
+        <aside class="alta__previa" aria-hidden="true">
+          <p class="alta__previa-titulo">Así saldrá la etiqueta</p>
+          <div id="prod-previa"></div>
+        </aside>
+      </div>
+      <footer class="dialogo__pie">
+        <button class="boton" type="button" data-cerrar>Cancelar</button>
+        <button class="boton boton--tinta" type="submit">Dar de alta</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- =============================== ALBARÁN =============================== -->
+  <dialog class="albaran" id="dlg-movimiento" aria-labelledby="mov-titulo" data-tipo="entrada">
+    <form class="albaran__papel" id="form-movimiento" novalidate>
+      <header class="albaran__cabecera">
+        <div>
+          <p class="albaran__antetitulo" id="mov-antetitulo">Llega mercancía</p>
+          <h2 id="mov-titulo">Albarán de entrada</h2>
+        </div>
+        <div class="albaran__meta">
+          <span id="mov-fecha"></span>
+          <button class="boton boton--icono boton--fantasma" type="button" data-cerrar aria-label="Cerrar"><span data-icono="cerrar"></span></button>
+        </div>
+      </header>
+      <div class="albaran__cuerpo">
+        <fieldset class="albaran__tipos">
+          <legend class="sr">Tipo de movimiento</legend>
+          <label><input type="radio" name="tipo" value="ENTRADA" checked><span><span data-icono="entrada"></span>Entrada</span></label>
+          <label><input type="radio" name="tipo" value="SALIDA"><span><span data-icono="salida"></span>Salida</span></label>
+          <label><input type="radio" name="tipo" value="AJUSTE"><span><span data-icono="recuento"></span>Recuento</span></label>
+        </fieldset>
+        <div class="campo">
+          <label for="mov-producto">Referencia</label>
+          <select id="mov-producto" name="producto_id" class="selector" required></select>
+          <p class="campo__error"></p>
+        </div>
+        <div class="campo">
+          <label for="mov-cantidad" id="mov-cantidad-etiqueta">Unidades que entran</label>
+          <input id="mov-cantidad" name="cantidad" type="number" inputmode="numeric" min="1" step="1" required class="cantidad-grande" placeholder="0">
+          <p class="campo__error"></p>
+        </div>
+        <div class="saldo" id="mov-saldo" aria-live="polite"></div>
+        <div class="campo">
+          <label for="mov-motivo">Concepto <span class="opcional">(opcional)</span></label>
+          <input id="mov-motivo" name="motivo" maxlength="200" autocomplete="off">
+          <div class="chips" id="mov-sugerencias"></div>
+          <p class="campo__error"></p>
+        </div>
+        <p class="formulario__error" role="alert"></p>
+      </div>
+      <footer class="albaran__pie">
+        <button class="boton" type="button" data-cerrar>Cancelar</button>
+        <button class="boton boton--senal boton--grande" type="submit" id="mov-enviar">Registrar entrada</button>
+      </footer>
+      <div class="sello" id="mov-sello" role="status" hidden></div>
+    </form>
+  </dialog>
+
+  <!-- ============================ TARJETA KARDEX ============================ -->
+  <dialog class="dialogo cajon" id="dlg-ficha" aria-labelledby="ficha-titulo">
+    <div class="dialogo__marco" id="ficha-contenido"></div>
+  </dialog>
+
+  <!-- ============================== CONFIRMAR ============================== -->
+  <dialog class="dialogo dialogo--pequeno" id="dlg-confirmar" aria-labelledby="conf-titulo" aria-describedby="conf-mensaje">
+    <form class="dialogo__marco" method="dialog">
+      <div class="dialogo__cuerpo">
+        <h2 id="conf-titulo"></h2>
+        <p id="conf-mensaje" class="texto-2"></p>
+      </div>
+      <footer class="dialogo__pie">
+        <button class="boton" value="no" id="conf-cancelar">Cancelar</button>
+        <button class="boton boton--peligro" value="si" id="conf-aceptar">Confirmar</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="avisos" id="avisos" aria-live="polite"></div>
+  <div class="impresion" id="impresion"></div>
+</body>
+</html>

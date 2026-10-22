@@ -1,0 +1,212 @@
+/* =====================================================================
+   Recorrido «Del muelle al Kardex»: el mundo 3D va fijo al fondo y el
+   scroll mueve la cámara. Reutiliza los tokens y piezas de estilos.css.
+   ===================================================================== */
+
+.recorrido { background: var(--suelo); }
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.recorrido) { scroll-behavior: smooth; }
+}
+
+.mundo { position: fixed; inset: 0; z-index: 0; display: block; width: 100%; height: 100%; }
+
+.recorrido__cabecera { position: fixed; top: 0; right: 0; left: 0; z-index: 10; }
+.recorrido__cabecera .nave__fila { align-items: center; }
+
+/* La cinta de seguridad es la barra de progreso del recorrido */
+.progreso { height: 6px; background: var(--banda-2); overflow: hidden; }
+.progreso__relleno {
+  display: block;
+  height: 100%;
+  background: var(--cinta-seguridad);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+/* Aviso cuando el navegador dibuja sin tarjeta gráfica */
+.aviso-aceleracion { display: none; }
+.sin-aceleracion .aviso-aceleracion {
+  position: fixed;
+  right: var(--e-4);
+  bottom: var(--e-4);
+  z-index: 11;
+  display: block;
+  max-width: 380px;
+  margin: 0;
+  padding: var(--e-3) var(--e-4);
+  border-left: 4px solid var(--senal);
+  border-radius: var(--radio);
+  background: var(--banda);
+  color: var(--banda-texto);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+}
+.sin-aceleracion .aviso-aceleracion strong { color: var(--senal); }
+
+/* Paradas del recorrido */
+.ruta {
+  position: fixed;
+  top: 50%;
+  right: var(--e-6);
+  z-index: 5;
+  transform: translateY(-50%);
+}
+.ruta ol {
+  display: grid;
+  gap: var(--e-1);
+  margin: 0;
+  padding: var(--e-2);
+  border: 1px solid var(--linea);
+  border-radius: var(--radio-l);
+  background: var(--papel);
+  list-style: none;
+}
+.ruta a {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--e-2);
+  padding: var(--e-1) var(--e-2);
+  border-radius: var(--radio-s);
+  color: var(--tinta-2);
+  font-size: var(--t-s);
+  font-weight: 750;
+  font-stretch: var(--estrecha);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-decoration: none;
+  transition: background var(--rapido), color var(--rapido);
+}
+.ruta a span {
+  display: grid;
+  place-items: center;
+  order: 2;
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid var(--tinta);
+  border-radius: var(--radio-s);
+  background: var(--papel);
+  color: var(--tinta);
+  font: 700 var(--t-2xs) var(--mono);
+}
+.ruta a[aria-current="step"] { color: var(--tinta); }
+.ruta a[aria-current="step"] span { border-color: var(--negro); background: var(--senal); color: var(--sobre-senal); }
+@media (hover: hover) {
+  .ruta a:hover { background: color-mix(in oklch, var(--papel) 80%, transparent); color: var(--tinta); }
+}
+
+/* Escenas: cada sección es larga; su panel de texto se queda fijo mientras dura */
+main { position: relative; z-index: 2; }
+.escena { position: relative; height: 230vh; }
+.escena--portada { height: 150vh; }
+.escena--final { height: 170vh; }
+.escena__fija {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  height: 100vh;
+  height: 100svh;
+  padding: calc(var(--alto-nave) + var(--e-6)) 220px var(--e-6) clamp(var(--e-4), 4vw, var(--e-9));
+  pointer-events: none;
+}
+.escena__panel {
+  display: grid;
+  gap: var(--e-3);
+  width: min(440px, 100%);
+  padding: var(--e-6);
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--radio-l);
+  background: color-mix(in oklch, var(--papel) 94%, transparent);
+  box-shadow: var(--sombra-3);
+  pointer-events: auto;
+  will-change: opacity, transform;
+}
+.escena__num {
+  justify-self: start;
+  padding: 2px var(--e-2);
+  background: var(--tinta);
+  color: var(--papel);
+  font-size: var(--t-s);
+  font-weight: 750;
+  font-stretch: var(--estrecha);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.escena__panel h2 {
+  font-size: clamp(2rem, 1.4rem + 2vw, 3rem);
+  font-weight: 850;
+  font-stretch: var(--estrecha);
+  line-height: 0.95;
+  text-transform: uppercase;
+  text-wrap: balance;
+}
+.escena__panel p { color: var(--tinta-2); font-size: var(--t-m); line-height: 1.55; }
+.escena__etiquetas { display: flex; flex-wrap: wrap; gap: 6px; margin: var(--e-1) 0 0; padding: 0; list-style: none; }
+.escena__etiquetas li {
+  padding: 2px var(--e-2);
+  border: 1px solid var(--tinta);
+  border-radius: var(--radio-xs);
+  color: var(--tinta);
+  font: 600 var(--t-2xs) / 1.6 var(--mono);
+}
+
+.escena__panel--portada { width: min(620px, 100%); padding: var(--e-7); }
+.escena__panel--portada h1 { font-size: clamp(2.75rem, 1.6rem + 4.5vw, 5.25rem); line-height: 0.88; }
+.escena__panel--portada > p:not(.escena__num, .escena__pista) { font-size: var(--t-l); }
+.escena__panel .escena__pista {
+  display: flex;
+  align-items: center;
+  gap: var(--e-3);
+  margin-top: var(--e-2);
+  color: var(--tinta);
+  font: 600 var(--t-xs) var(--mono);
+  text-transform: uppercase;
+}
+.escena__pista-cinta {
+  width: 72px;
+  height: 10px;
+  border: 1px solid var(--negro);
+  border-radius: var(--radio-xs);
+  background: var(--cinta-seguridad);
+  background-size: 28px 100%;
+  animation: avanzar-cinta 0.8s linear infinite;
+}
+
+.escena__panel--final { width: min(520px, 100%); }
+.escena__cifras { display: grid; grid-template-columns: repeat(3, 1fr); margin: var(--e-2) 0; border-block: 2px solid var(--tinta); }
+.escena__cifras[hidden] { display: none; }
+.escena__cifras div { padding: var(--e-3) var(--e-3) var(--e-3) 0; }
+.escena__cifras div + div { padding-left: var(--e-3); border-left: 1px solid var(--linea); }
+.escena__cifras dt { color: var(--tinta-3); font: 600 var(--t-2xs) var(--mono); text-transform: uppercase; }
+.escena__cifras dd { margin: 0; font-size: var(--t-xl); font-weight: 850; font-stretch: var(--estrecha); font-variant-numeric: tabular-nums; }
+.escena__acciones { display: flex; flex-wrap: wrap; gap: var(--e-2); margin-top: var(--e-2); }
+
+/* Sin WebGL: el recorrido se lee como una página normal */
+.sin-3d .mundo { display: none; }
+.sin-3d .escena { height: auto; }
+.sin-3d .escena__fija { position: static; height: auto; padding-block: var(--e-8) 0; }
+.sin-3d .escena--portada .escena__fija { padding-top: calc(var(--alto-nave) + var(--e-8)); }
+.sin-3d main { padding-bottom: var(--e-9); }
+
+@media (max-width: 920px) {
+  .ruta { display: none; }
+  .escena__fija { padding-right: var(--e-4); }
+  .recorrido__cabecera .nave__fila { flex-wrap: nowrap; padding-right: var(--e-3); }
+}
+
+@media (max-width: 700px) {
+  .escena { height: 210vh; }
+  .escena__fija {
+    align-items: flex-end;
+    padding: calc(var(--alto-nave) + var(--e-4)) var(--e-3) calc(var(--e-3) + env(safe-area-inset-bottom));
+  }
+  .escena__panel { gap: var(--e-2); padding: var(--e-4); }
+  .escena__panel h2 { font-size: 1.875rem; }
+  .escena__panel p { font-size: var(--t-s); }
+  .escena__panel--portada { padding: var(--e-5); }
+  .escena__panel--portada h1 { font-size: 2.75rem; }
+  .escena__panel--portada > p:not(.escena__num, .escena__pista) { font-size: var(--t-m); }
+  .escena__acciones .boton { flex: 1; }
+  .marca__sub { display: none; }
+}

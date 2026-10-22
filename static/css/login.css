@@ -1,0 +1,142 @@
+/* =====================================================================
+   Control de acceso: el cartel de la nave a la izquierda y la tarjeta
+   de identificación del empleado a la derecha. Tokens de estilos.css.
+   ===================================================================== */
+
+.acceso { min-height: 100dvh; background: var(--suelo); }
+
+.acceso__marco {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 100dvh;
+}
+
+/* Cartel de zona restringida */
+.acceso__cartel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--e-6);
+  padding: var(--e-8) clamp(var(--e-6), 5vw, var(--e-9));
+  background: var(--banda);
+  color: var(--banda-texto);
+}
+.acceso__cinta { height: 18px; margin-inline: calc(clamp(var(--e-6), 5vw, var(--e-9)) * -1); background: var(--cinta-seguridad); }
+.acceso__aviso {
+  align-self: flex-start;
+  padding: var(--e-1) var(--e-3);
+  background: var(--senal);
+  color: var(--sobre-senal);
+  font-size: var(--t-s);
+  font-weight: 800;
+  font-stretch: var(--estrecha);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.acceso__rotulo {
+  font-size: clamp(3.5rem, 2rem + 6vw, 7.5rem);
+  font-weight: 900;
+  font-stretch: 62%;
+  line-height: 0.85;
+  letter-spacing: -0.01em;
+  text-transform: uppercase;
+}
+.acceso__nave { color: var(--banda-texto-2); font: 600 var(--t-s) var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+
+/* Tarjeta de identificación */
+.acceso__tarjeta {
+  display: grid;
+  place-items: center;
+  padding: var(--e-8) var(--e-6);
+}
+.acreditacion {
+  position: relative;
+  display: grid;
+  gap: var(--e-6);
+  width: min(420px, 100%);
+  padding: var(--e-8) var(--e-7) var(--e-6);
+  border: 1px solid var(--linea-fuerte);
+  border-top: 10px solid var(--senal);
+  border-radius: var(--radio-l);
+  background: var(--papel);
+  box-shadow: var(--sombra-3);
+}
+/* La ranura del cordón de la acreditación */
+.acreditacion__ranura {
+  position: absolute;
+  top: var(--e-3);
+  left: 50%;
+  width: 64px;
+  height: 10px;
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--radio-pildora, 999px);
+  background: var(--suelo);
+  transform: translateX(-50%);
+}
+.acreditacion__cabecera { display: flex; align-items: center; gap: var(--e-4); }
+.acreditacion__cabecera .marca__placa { width: 48px; height: 48px; font-size: 26px; }
+.acreditacion__antetitulo { color: var(--tinta-3); font: 600 var(--t-2xs) var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.acreditacion__cabecera h1 { font-size: clamp(2rem, 1.6rem + 1.6vw, 2.75rem); line-height: 0.95; }
+
+.acreditacion__formulario { display: grid; gap: var(--e-4); }
+.acreditacion__formulario .campo input { height: 46px; font-size: 1rem; }
+.con-boton { position: relative; }
+.con-boton input { padding-right: 48px; }
+.con-boton .boton { position: absolute; top: 3px; right: 3px; height: 40px; }
+.con-boton .boton[aria-pressed="true"] { color: var(--tinta); }
+
+.acreditacion__ejemplo {
+  display: grid;
+  gap: var(--e-2);
+  padding: var(--e-4);
+  border: 1px dashed var(--linea-fuerte);
+  border-radius: var(--radio);
+  background: var(--papel-2);
+}
+.acreditacion__ejemplo[hidden] { display: none; }
+.acreditacion__ejemplo h2 { font-size: var(--t-s); font-weight: 800; font-stretch: var(--estrecha); letter-spacing: 0.06em; text-transform: uppercase; }
+.acreditacion__ejemplo p { color: var(--tinta-3); font-size: var(--t-xs); }
+.acreditacion__ejemplo ul { display: grid; gap: var(--e-2); margin: 0; padding: 0; list-style: none; }
+.cuenta-ejemplo {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--e-3);
+  width: 100%;
+  padding: var(--e-2) var(--e-3);
+  border: 1px solid var(--linea-fuerte);
+  border-radius: var(--radio);
+  background: var(--papel);
+  text-align: left;
+  transition: border-color var(--rapido);
+}
+.cuenta-ejemplo__inicial {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--tinta);
+  color: var(--papel);
+  font-weight: 800;
+}
+.cuenta-ejemplo__textos { display: grid; gap: 2px; min-width: 0; }
+.cuenta-ejemplo__fila { display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--e-2); }
+.cuenta-ejemplo strong { font-size: var(--t-s); }
+.cuenta-ejemplo small { color: var(--tinta-3); font: 500 var(--t-2xs) var(--mono); white-space: nowrap; }
+@media (hover: hover) {
+  .cuenta-ejemplo:hover { border-color: var(--tinta); }
+}
+
+.acreditacion__pie { display: grid; justify-items: center; gap: var(--e-2); color: var(--tinta-3); font: 500 var(--t-2xs) var(--mono); }
+.acreditacion__barras { width: 60%; height: 34px; fill: var(--tinta); shape-rendering: crispEdges; }
+
+@media (max-width: 860px) {
+  .acceso__marco { grid-template-columns: minmax(0, 1fr); }
+  .acceso__cartel { gap: var(--e-3); padding-block: var(--e-5); }
+  .acceso__cinta { height: 10px; }
+  .acceso__rotulo { font-size: 3rem; }
+  .acceso__rotulo br { display: none; }
+  .acceso__tarjeta { place-items: start center; padding: var(--e-6) var(--e-4) var(--e-8); }
+  .acreditacion { padding: var(--e-7) var(--e-5) var(--e-5); }
+}

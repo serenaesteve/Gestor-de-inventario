@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="es" data-tema="claro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Del muelle al Kardex · Almacén</title>
+  <meta name="description" content="Recorrido por el almacén en 3D: cómo entra, se guarda, sale y se anota cada caja en el gestor de inventario.">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23f2c500'/%3E%3Cpath d='M16 7l8 4.5v9L16 25l-8-4.5v-9z' fill='none' stroke='%23161512' stroke-width='2.4' stroke-linejoin='round'/%3E%3Cpath d='M8 11.5l8 4.5 8-4.5M16 16v9' fill='none' stroke='%23161512' stroke-width='2.4' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Martian+Mono:wdth,wght@75..112.5,400..700&display=swap">
+  <link rel="stylesheet" href="/css/estilos.css">
+  <link rel="stylesheet" href="/css/recorrido.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three/three.module.min.js" } }</script>
+  <script type="module" src="/js/recorrido.js"></script>
+</head>
+<body class="recorrido">
+  <a class="saltar" href="#final">Saltar al final del recorrido</a>
+
+  <canvas class="mundo" id="mundo" aria-hidden="true"></canvas>
+
+  <header class="nave recorrido__cabecera">
+    <div class="nave__fila">
+      <a class="marca" href="#inicio">
+        <span class="marca__placa" aria-hidden="true">
+          <svg class="icono" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+        </span>
+        <span class="marca__texto">
+          <span class="marca__nombre">Almacén</span>
+          <span class="marca__sub">Del muelle al Kardex</span>
+        </span>
+      </a>
+      <div class="nave__acciones">
+        <a class="boton boton--senal" href="/#nave">Entrar en la nave</a>
+      </div>
+    </div>
+    <div class="progreso" aria-hidden="true"><span class="progreso__relleno"></span></div>
+  </header>
+
+  <p class="aviso-aceleracion" role="status">
+    <strong>Modo ligero:</strong> tu navegador dibuja el 3D sin la tarjeta gráfica y el recorrido irá a saltos.
+    En Chrome: <em>Configuración → Sistema → Usar aceleración por hardware</em>, y reinicia el navegador.
+  </p>
+
+  <nav class="ruta" aria-label="Escenas del recorrido">
+    <ol>
+      <li><a href="#muelle"><span>01</span>Muelle</a></li>
+      <li><a href="#recepcion"><span>02</span>Recepción</a></li>
+      <li><a href="#pasillos"><span>03</span>Estanterías</a></li>
+      <li><a href="#expedicion"><span>04</span>Expedición</a></li>
+      <li><a href="#kardex"><span>05</span>Kardex</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section class="escena escena--portada" id="inicio" data-escena aria-labelledby="t-inicio">
+      <div class="escena__fija">
+        <div class="escena__panel escena__panel--portada">
+          <p class="escena__num">Gestor de inventario · Acceso a Datos</p>
+          <h1 id="t-inicio">Del muelle al Kardex</h1>
+          <p>Un recorrido por el almacén para ver cómo entra, se guarda, sale y queda anotada cada caja, y qué hace la base de datos en cada paso.</p>
+          <p class="escena__pista"><span class="escena__pista-cinta" aria-hidden="true"></span>Desliza para recorrer el almacén</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="escena" id="muelle" data-escena aria-labelledby="t-muelle">
+      <div class="escena__fija">
+        <article class="escena__panel">
+          <p class="escena__num">01 · Muelle de carga</p>
+          <h2 id="t-muelle">Todo empieza en el muelle.</h2>
+          <p>Llega el camión y los palés bajan a la plataforma. Ninguna caja cuenta como existencia hasta que entra con su albarán.</p>
+          <ul class="escena__etiquetas"><li>Stock inicial = primera entrada</li><li>Clave ajena a productos</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="escena" id="recepcion" data-escena aria-labelledby="t-recepcion">
+      <div class="escena__fija">
+        <article class="escena__panel">
+          <p class="escena__num">02 · Recepción</p>
+          <h2 id="t-recepcion">Cada entrada, sellada.</h2>
+          <p>El albarán se registra en una sola transacción: se suma el stock y se anota el movimiento. O se guardan las dos cosas, o ninguna.</p>
+          <ul class="escena__etiquetas"><li>BEGIN IMMEDIATE</li><li>COMMIT · ROLLBACK</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="escena" id="pasillos" data-escena aria-labelledby="t-pasillos">
+      <div class="escena__fija">
+        <article class="escena__panel">
+          <p class="escena__num">03 · Estanterías</p>
+          <h2 id="t-pasillos">Cada referencia, en su hueco.</h2>
+          <p>Código único y un stock mínimo que avisa antes de quedarse sin nada. Cuando el teclado agotado se repone, su etiqueta cambia sola.</p>
+          <ul class="escena__etiquetas"><li>UNIQUE COLLATE NOCASE</li><li>Vista v_existencias</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="escena" id="expedicion" data-escena aria-labelledby="t-expedicion">
+      <div class="escena__fija">
+        <article class="escena__panel">
+          <p class="escena__num">04 · Expedición</p>
+          <h2 id="t-expedicion">Lo que sale, se descuenta.</h2>
+          <p>Nunca más de lo que hay: aunque la aplicación se equivocara, la base de datos rechaza un stock negativo.</p>
+          <ul class="escena__etiquetas"><li>CHECK (stock_actual &gt;= 0)</li><li>Control optimista</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="escena" id="kardex" data-escena aria-labelledby="t-kardex">
+      <div class="escena__fija">
+        <article class="escena__panel">
+          <p class="escena__num">05 · Libro Kardex</p>
+          <h2 id="t-kardex">Y nada se borra.</h2>
+          <p>Cada movimiento queda anotado para siempre: un trigger impide modificarlo, y el saldo es siempre la suma de todos sus asientos.</p>
+          <ul class="escena__etiquetas"><li>Trigger inmutable</li><li>Saldo = Σ movimientos</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="escena escena--final" id="final" data-escena aria-labelledby="t-final">
+      <div class="escena__fija">
+        <div class="escena__panel escena__panel--final">
+          <p class="escena__num">06 · La nave</p>
+          <h2 id="t-final">Todo el almacén, en una pantalla.</h2>
+          <p>Entra y mira tus existencias de verdad, caja a caja, en la nave 3D.</p>
+          <dl class="escena__cifras" id="final-cifras" hidden></dl>
+          <div class="escena__acciones">
+            <a class="boton boton--senal boton--grande" href="/#nave">Entrar en la nave</a>
+            <a class="boton boton--grande" href="/#existencias">Ver existencias</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
