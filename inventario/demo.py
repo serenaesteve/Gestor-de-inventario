@@ -5,10 +5,9 @@ semilla fija, así que siempre sale el mismo almacén, con fechas relativas a ho
 """
 
 import random
-from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
-from .conexion import conectar, inicializar
+from .bd import texto_fecha
 from .cuentas import CuentasServicio
 from .servicio import InventarioServicio
 
@@ -58,10 +57,6 @@ TERMINAN_BAJO_MINIMO = {"PAP-002", "INF-004", "LIM-003", "EMB-001", "FER-004"}
 
 MOTIVOS_SALIDA = [("Venta", 6), ("Pedido oficina central", 2), ("Consumo interno", 2), ("Merma o rotura", 1)]
 MOTIVOS_ENTRADA = [("Compra a proveedor", 5), ("Devolución de cliente", 1)]
-
-
-def _iso(momento):
-    return momento.strftime("%Y-%m-%dT%H:%M:%S.") + f"{momento.microsecond // 1000:03d}Z"
 
 
 def _elegir(azar, opciones):
@@ -120,16 +115,19 @@ def _historial(azar, minimo, ahora, codigo):
     return eventos
 
 
-def cargar_demo(ruta_bd, semilla=2026):
-    """Carga el material de ejemplo si no hay ninguna referencia. Devuelve un resumen o None."""
-    with closing(conectar(ruta_bd)) as conn:
-        inicializar(conn)
-        if conn.execute("SELECT COUNT(*) FROM productos").fetchone()[0]:
+def cargar_demo(bd, semilla=2026):
+    """Carga el material de ejemplo si no hay ninguna referencia. Devuelve un resumen o None.
+
+    `bd` es la BaseDatos del programa (SBD local o servidor).
+    """
+    bd.preparar()
+    with bd.conexion("inventario · material de ejemplo") as conexion:
+        inventario = InventarioServicio(conexion)
+        if inventario.productos.contar():
             return None
         azar = random.Random(semilla)
-        ahora = datetime.now(timezone.utc)
-        inventario = InventarioServicio(conn)
-        cuentas = CuentasServicio(conn)
+        ahora = datetime.now().replace(microsecond=0)  # SBD guarda las fechas en hora local
+        cuentas = CuentasServicio(conexion)
 
         ids_usuario = {}
         for usuario, nombre, contrasena, rol in USUARIOS_EJEMPLO:
@@ -140,13 +138,13 @@ def cargar_demo(ruta_bd, semilla=2026):
         for codigo, nombre, categoria, precio, minimo, descripcion in REFERENCIAS:
             producto = inventario.crear_producto({
                 "codigo": codigo, "nombre": nombre, "categoria": categoria,
-                "precio": precio, "stock_minimo": minimo, "descripcion": descripcion,
+                "precio": str(precio), "stock_minimo": minimo, "descripcion": descripcion,
             })
             eventos = _historial(azar, minimo, ahora, codigo)
-            conn.execute("UPDATE productos SET creado_en = ? WHERE id = ?", (_iso(eventos[0][0])[:19] + "Z", producto["id"]))
+            inventario.productos.fijar_creado_en(producto["id"], texto_fecha(eventos[0][0]))
             for fecha, tipo, cantidad, motivo, quien in eventos:
                 inventario.importar_movimiento(
-                    producto["id"], tipo, cantidad, motivo, fecha=_iso(fecha), usuario_id=ids_usuario[quien]
+                    producto["id"], tipo, cantidad, motivo, fecha=texto_fecha(fecha), usuario_id=ids_usuario[quien]
                 )
                 movimientos += 1
 

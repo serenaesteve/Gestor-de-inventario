@@ -40,19 +40,22 @@ def entero(datos, campo, etiqueta, *, minimo=0, maximo=1_000_000_000, defecto=No
     return valor
 
 
-def importe_en_centimos(datos, campo, etiqueta, *, maximo=10_000_000):
-    """Convierte un importe en euros (número o texto, admite coma decimal) a céntimos."""
+def importe(datos, campo, etiqueta, *, maximo=10_000_000):
+    """Un importe en euros (número o texto, admite coma decimal) como Decimal exacto con 2 decimales.
+
+    Se guarda en una columna `dinero` de SBD, que tampoco usa coma flotante.
+    """
     valor = datos.get(campo, 0)
     if isinstance(valor, bool) or not isinstance(valor, (int, float, str)):
         raise ErrorValidacion(f"{etiqueta} debe ser un número", campo)
     try:
-        importe = Decimal(str(valor).strip().replace(",", ".") or "0")
+        cantidad = Decimal(str(valor).strip().replace(",", ".") or "0")
     except InvalidOperation:
         raise ErrorValidacion(f"{etiqueta} debe ser un número", campo) from None
-    if not importe.is_finite():
+    if not cantidad.is_finite():
         raise ErrorValidacion(f"{etiqueta} debe ser un número", campo)
-    if importe < 0:
+    if cantidad < 0:
         raise ErrorValidacion(f"{etiqueta} no puede ser negativo", campo)
-    if importe > maximo:
+    if cantidad > maximo:
         raise ErrorValidacion(f"{etiqueta} no puede superar {maximo} €", campo)
-    return int((importe * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    return cantidad.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

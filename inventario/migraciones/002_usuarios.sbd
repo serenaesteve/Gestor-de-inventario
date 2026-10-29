@@ -1,0 +1,31 @@
+-- =====================================================================
+--  Migración 002 · Usuarios, sesiones y autoría de los movimientos
+-- =====================================================================
+--  Se aplica sola sobre una base de la versión 1 sin perder datos: los
+--  movimientos antiguos quedan con usuario_id = nulo («sin registrar»).
+-- =====================================================================
+
+crear tabla usuarios {
+  id               entero clave
+  usuario          texto(30) obligatorio unico comprobar longitud(usuario) >= 3
+  nombre           texto(80) obligatorio comprobar longitud(recortar(nombre)) > 0
+  rol              texto = "operario" comprobar rol en ["admin", "operario"]
+  -- Nunca la contraseña: solo su resumen PBKDF2 con sal (algoritmo$iteraciones$sal$resumen)
+  hash_contrasena  texto obligatorio
+  activo           logico = verdadero
+  creado_en        fechahora = ahora()
+  ultimo_acceso    fechahora
+}
+
+crear tabla sesiones {
+  -- La huella SHA-256 del token, no el token: si alguien copia la base no puede suplantar a nadie
+  token_hash  texto clave
+  usuario_id  entero obligatorio -> usuarios(id) al borrar cascada
+  creada_en   fechahora = ahora()
+  expira_en   fechahora obligatorio
+}
+indexar sesiones (usuario_id)
+indexar sesiones (expira_en)
+
+-- Quién registró cada movimiento
+añadir a movimientos usuario_id entero -> usuarios(id)

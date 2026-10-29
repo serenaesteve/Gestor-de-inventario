@@ -1,21 +1,19 @@
-"""Pruebas del gestor de inventario: reglas de negocio, base de datos y API HTTP.
+"""Pruebas del gestor de inventario: reglas de negocio, base de datos SBD y API HTTP.
 
     python -m unittest discover -s tests -v
 """
 
 import json
-import sqlite3
 import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
-from contextlib import closing
-from pathlib import Path
+from decimal import Decimal
 
 from inventario import cuentas, seguridad
 from inventario.api import crear_servidor
-from inventario.conexion import VERSION_ESQUEMA, conectar, inicializar
+from inventario.bd import VERSION_ESQUEMA, BaseDatos, SBDError, migraciones, version_actual
 from inventario.cuentas import CuentasServicio
 from inventario.demo import cargar_demo
 from inventario.errores import Conflicto, DemasiadosIntentos, ErrorValidacion, NoAutorizado, NoEncontrado
@@ -25,20 +23,32 @@ from inventario.servicio import InventarioServicio
 seguridad.ITERACIONES = 1_000
 
 
+class ConSBD(unittest.TestCase):
+    """Cada test trabaja con una carpeta de SBD nueva y una conexión abierta (`self.conn`)."""
+
+    def setUp(self):
+        self._carpeta = tempfile.TemporaryDirectory()
+        self.bd = BaseDatos(self._carpeta.name)
+        self.bd.preparar()
+        self._conexion = self.bd.conexion()
+        self.conn = self._conexion.__enter__()
+
+    def tearDown(self):
+        self._conexion.__exit__(None, None, None)
+        self.bd.cerrar()
+        self._carpeta.cleanup()
+
+
 def producto(**cambios):
     datos = {"codigo": "TST-001", "nombre": "Tornillo M6", "categoria": "Ferretería",
              "precio": "0,15", "stock_minimo": 100, "stock_inicial": 0}
     return {**datos, **cambios}
 
 
-class ServicioTest(unittest.TestCase):
+class ServicioTest(ConSBD):
     def setUp(self):
-        self.conn = conectar(":memory:")
-        inicializar(self.conn)
+        super().setUp()
         self.srv = InventarioServicio(self.conn)
-
-    def tearDown(self):
-        self.conn.close()
 
     def mover(self, producto_id, tipo, cantidad, motivo=""):
         return self.srv.registrar_movimiento(
@@ -46,9 +56,8 @@ class ServicioTest(unittest.TestCase):
         )
 
     def suma_movimientos(self, producto_id):
-        return self.conn.execute(
-            "SELECT COALESCE(SUM(cantidad), 0) FROM movimientos WHERE producto_id = ?", (producto_id,)
-        ).fetchone()[0]
+        return self.conn.valor("buscar movimientos donde producto_id = ? mostrar si_nulo(sumar(cantidad), 0)",
+                               [producto_id])
 
     # ---------------------------------------------------------------- productos
 
@@ -72,7 +81,7 @@ class ServicioTest(unittest.TestCase):
         self.srv.crear_producto(producto(codigo="X"))
         with self.assertRaises(Conflicto):
             self.srv.crear_producto(producto(codigo="X", stock_inicial=10))
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM movimientos").fetchone()[0], 0)
+        self.assertEqual(self.conn.valor("buscar movimientos mostrar contar()"), 0)
 
     def test_validaciones_de_producto(self):
         casos = [
@@ -92,8 +101,8 @@ class ServicioTest(unittest.TestCase):
     def test_precio_se_redondea_a_centimos(self):
         p = self.srv.crear_producto(producto(precio=19.999))
         self.assertEqual(p["precio"], 20.0)
-        guardado = self.conn.execute("SELECT precio_centimos FROM productos").fetchone()[0]
-        self.assertEqual(guardado, 2000)
+        guardado = self.conn.valor("buscar productos mostrar precio")
+        self.assertEqual(guardado, Decimal("20.00"))  # dinero exacto, sin coma flotante
 
     def test_editar_no_toca_el_stock(self):
         p = self.srv.crear_producto(producto(stock_inicial=5))
@@ -185,37 +194,47 @@ class ServicioTest(unittest.TestCase):
 
     def test_la_bd_impide_stock_negativo_aunque_falle_la_aplicacion(self):
         p = self.srv.crear_producto(producto())
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.conn.execute("UPDATE productos SET stock_actual = -1 WHERE id = ?", (p["id"],))
+        with self.assertRaises(SBDError):
+            self.conn.ejecutar("actualizar productos poner stock_actual = -1 donde id = ?", [p["id"]])
 
-    def test_los_movimientos_son_inmutables(self):
-        p = self.srv.crear_producto(producto(stock_inicial=1))
-        for sql in ("UPDATE movimientos SET cantidad = 99", "DELETE FROM movimientos"):
-            with self.subTest(sql=sql), self.assertRaises(sqlite3.IntegrityError):
-                self.conn.execute(sql)
-        self.assertEqual(self.suma_movimientos(p["id"]), 1)
+    def test_la_bd_rechaza_movimientos_incoherentes(self):
+        p = self.srv.crear_producto(producto(stock_inicial=5))
+        incoherentes = [
+            ("SALIDA", 3, 5, 8),     # una salida con cantidad positiva
+            ("ENTRADA", 3, 5, 9),    # el saldo no es anterior + cantidad
+            ("REGALO", 1, 5, 6),     # tipo que no existe
+        ]
+        for tipo, cantidad, anterior, resultante in incoherentes:
+            with self.subTest(tipo=tipo), self.assertRaises(SBDError):
+                self.conn.ejecutar(
+                    "insertar en movimientos { producto_id: ?, tipo: ?, cantidad: ?, stock_anterior: ?, stock_resultante: ? }",
+                    [p["id"], tipo, cantidad, anterior, resultante],
+                )
 
     def test_clave_ajena_activa(self):
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.conn.execute(
-                "INSERT INTO movimientos (producto_id, tipo, cantidad, stock_anterior, stock_resultante)"
-                " VALUES (12345, 'ENTRADA', 1, 0, 1)"
+        with self.assertRaises(SBDError):
+            self.conn.ejecutar(
+                'insertar en movimientos { producto_id: 12345, tipo: "ENTRADA", cantidad: 1, stock_anterior: 0, stock_resultante: 1 }'
             )
 
+    def test_una_orden_que_falla_en_una_transaccion_no_deja_nada(self):
+        p = self.srv.crear_producto(producto(stock_inicial=2))
+        with self.assertRaises(SBDError):
+            with self.conn.transaccion():
+                self.conn.ejecutar("actualizar productos poner stock_actual = 50 donde id = ?", [p["id"]])
+                self.conn.ejecutar("actualizar productos poner stock_actual = -1 donde id = ?", [p["id"]])
+        self.assertEqual(self.srv.obtener_producto(p["id"])["stock_actual"], 2)
 
-class CuentasTest(unittest.TestCase):
+
+class CuentasTest(ConSBD):
     def setUp(self):
-        self.conn = conectar(":memory:")
-        inicializar(self.conn)
+        super().setUp()
         self.cuentas = CuentasServicio(self.conn)
         self.cuentas.crear_usuario("ana", "Ana Gil", "contraseña-larga", "admin")
         cuentas._fallos.clear()
 
-    def tearDown(self):
-        self.conn.close()
-
     def test_contrasena_cifrada_con_sal(self):
-        guardado = self.conn.execute("SELECT hash_contrasena FROM usuarios").fetchone()[0]
+        guardado = self.conn.valor("buscar usuarios mostrar hash_contrasena")
         self.assertNotIn("contraseña-larga", guardado)
         self.assertTrue(guardado.startswith("pbkdf2_sha256$"))
         self.assertNotEqual(seguridad.cifrar_contrasena("x"), seguridad.cifrar_contrasena("x"))
@@ -225,7 +244,7 @@ class CuentasTest(unittest.TestCase):
         self.assertEqual(usuario["rol"], "admin")
         self.assertEqual(self.cuentas.usuario_de_sesion(token)["nombre"], "Ana Gil")
         # En la BD solo está la huella del token
-        self.assertIsNone(self.conn.execute("SELECT 1 FROM sesiones WHERE token_hash = ?", (token,)).fetchone())
+        self.assertIsNone(self.conn.una("buscar sesiones donde token_hash = ?", [token]))
         self.cuentas.cerrar_sesion(token)
         self.assertIsNone(self.cuentas.usuario_de_sesion(token))
 
@@ -244,7 +263,7 @@ class CuentasTest(unittest.TestCase):
 
     def test_sesion_caducada(self):
         token, _ = self.cuentas.iniciar_sesion({"usuario": "ana", "contrasena": "contraseña-larga"})
-        self.conn.execute("UPDATE sesiones SET expira_en = '2000-01-01T00:00:00Z'")
+        self.conn.ejecutar("actualizar sesiones poner expira_en = 2000-01-01 00:00 todas")
         self.assertIsNone(self.cuentas.usuario_de_sesion(token))
 
     def test_validaciones_de_usuario(self):
@@ -264,46 +283,59 @@ class CuentasTest(unittest.TestCase):
 
 
 class MigracionYEjemploTest(unittest.TestCase):
-    def test_migra_una_bd_de_la_version_1_sin_perder_datos(self):
-        with tempfile.TemporaryDirectory() as directorio:
-            ruta = str(Path(directorio) / "v1.db")
-            conn = conectar(ruta)
-            sql = (Path(__file__).resolve().parent.parent / "inventario/migraciones/001_inicial.sql").read_text()
-            conn.executescript(f"BEGIN; {sql} PRAGMA user_version = 1; COMMIT;")
-            conn.execute("INSERT INTO productos (codigo, nombre, stock_actual) VALUES ('V1-1', 'Antiguo', 3)")
-            conn.execute("INSERT INTO movimientos (producto_id, tipo, cantidad, stock_anterior, stock_resultante) VALUES (1, 'ENTRADA', 3, 0, 3)")
-            inicializar(conn)
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], VERSION_ESQUEMA)
-            fila = conn.execute("SELECT usuario_id, cantidad FROM movimientos").fetchone()
-            self.assertEqual((fila["usuario_id"], fila["cantidad"]), (None, 3))
-            inicializar(conn)  # volver a inicializar no hace nada
-            conn.close()
+    def test_migra_una_base_de_la_version_1_sin_perder_datos(self):
+        with tempfile.TemporaryDirectory() as carpeta:
+            bd = BaseDatos(carpeta)
+            bd._servidor.crear("inventario")
+            with bd.conexion() as conn:
+                numero, ruta = migraciones()[0]
+                conn.ejecutar(ruta.read_text())
+                conn.ejecutar('insertar en ajustes { clave: "version_esquema", valor: "1" }')
+                conn.ejecutar('insertar en productos { codigo: "V1-1", nombre: "Antiguo", stock_actual: 3 }')
+                conn.ejecutar('insertar en movimientos { producto_id: 1, tipo: "ENTRADA", cantidad: 3, stock_anterior: 0, stock_resultante: 3 }')
+            bd.preparar()
+            with bd.conexion() as conn:
+                self.assertEqual(version_actual(conn), VERSION_ESQUEMA)
+                fila = conn.una("buscar movimientos mostrar usuario_id, cantidad")
+                self.assertEqual((fila["usuario_id"], fila["cantidad"]), (None, 3))
+                self.assertIn("usuarios", conn.tablas())
+            bd.preparar()  # volver a preparar no hace nada
+            bd.cerrar()
 
     def test_material_de_ejemplo_coherente(self):
-        with tempfile.TemporaryDirectory() as directorio:
-            ruta = str(Path(directorio) / "ejemplo.db")
-            resumen = cargar_demo(ruta)
+        with tempfile.TemporaryDirectory() as carpeta:
+            bd = BaseDatos(carpeta)
+            resumen = cargar_demo(bd)
             self.assertEqual(resumen["referencias"], 28)
-            self.assertIsNone(cargar_demo(ruta))  # solo se carga en una BD vacía
-            conn = conectar(ruta)
-            descuadres = conn.execute(
-                "SELECT COUNT(*) FROM productos p WHERE stock_actual <> "
-                "(SELECT COALESCE(SUM(cantidad), 0) FROM movimientos WHERE producto_id = p.id)"
-            ).fetchone()[0]
-            self.assertEqual(descuadres, 0)
-            estados = {r[0] for r in conn.execute("SELECT estado FROM v_existencias")}
-            self.assertEqual(estados, {"OK", "BAJO", "AGOTADO"})
-            self.assertTrue(CuentasServicio(conn).datos_de_ejemplo())
-            conn.close()
+            self.assertIsNone(cargar_demo(bd))  # solo se carga en una base vacía
+            with bd.conexion() as conn:
+                srv = InventarioServicio(conn)
+                self.assertEqual(srv.movimientos.descuadres(), [])
+                self.assertEqual({p["estado"] for p in srv.listar_productos()}, {"OK", "BAJO", "AGOTADO"})
+                self.assertTrue(CuentasServicio(conn).datos_de_ejemplo())
+            bd.cerrar()
+
+    def test_los_datos_sobreviven_al_reinicio(self):
+        with tempfile.TemporaryDirectory() as carpeta:
+            bd = BaseDatos(carpeta)
+            bd.preparar()
+            with bd.conexion() as conn:
+                InventarioServicio(conn).crear_producto(producto(codigo="PERS-1", stock_inicial=4))
+            bd.cerrar()
+            otra = BaseDatos(carpeta)  # como si se volviera a arrancar el programa
+            otra.preparar()
+            with otra.conexion() as conn:
+                self.assertEqual(InventarioServicio(conn).listar_productos()[0]["stock_actual"], 4)
+            otra.cerrar()
 
 
 class ApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.dir = tempfile.TemporaryDirectory()
-        ruta = str(Path(cls.dir.name) / "test.db")
-        cls.servidor = crear_servidor("127.0.0.1", 0, ruta)
-        with closing(conectar(ruta)) as conn:
+        cls.bd = BaseDatos(cls.dir.name)
+        cls.servidor = crear_servidor("127.0.0.1", 0, cls.bd)
+        with cls.bd.conexion() as conn:
             CuentasServicio(conn).crear_usuario("jefa", "Jefa de almacén", "clave-segura-1", "admin")
             CuentasServicio(conn).crear_usuario("mozo", "Mozo de almacén", "clave-segura-2", "operario")
         cls.url = f"http://127.0.0.1:{cls.servidor.server_port}"
@@ -313,6 +345,7 @@ class ApiTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.servidor.shutdown()
         cls.servidor.server_close()
+        cls.bd.cerrar()
         cls.dir.cleanup()
 
     def setUp(self):

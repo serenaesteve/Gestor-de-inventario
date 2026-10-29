@@ -1,8 +1,7 @@
 """API REST (JSON) y servidor de los ficheros estáticos del frontend.
 
-Solo usa la biblioteca estándar. Cada petición abre su propia conexión a
-SQLite, así el servidor puede atender varias peticiones a la vez sin
-compartir conexiones entre hilos.
+Solo usa la biblioteca estándar y SBD. Cada petición pide su conexión a la
+BaseDatos del programa, que las atiende de una en una.
 
 Seguridad: toda la API pide sesión salvo lo marcado como `publica`. La sesión
 viaja en una cookie HttpOnly + SameSite=Strict, y las escrituras exigen cuerpo
@@ -13,14 +12,13 @@ import json
 import logging
 import mimetypes
 import re
-from contextlib import closing
 from http import HTTPStatus
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from .conexion import conectar, inicializar
+from .bd import BaseOcupada, SBDError
 from .cuentas import DURACION_SESION, CuentasServicio
 from .demo import USUARIOS_EJEMPLO
 from .errores import ErrorInventario, ErrorValidacion, NoAutorizado, Prohibido, TipoNoAdmitido
@@ -57,9 +55,9 @@ class Peticion:
 
 
 class Contexto:
-    def __init__(self, conn):
-        self.inventario = InventarioServicio(conn)
-        self.cuentas = CuentasServicio(conn)
+    def __init__(self, conexion):
+        self.inventario = InventarioServicio(conexion)
+        self.cuentas = CuentasServicio(conexion)
 
 
 class Respuesta:
@@ -165,8 +163,8 @@ def _exportar_csv(ctx, pet):
 class ServidorInventario(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, direccion, ruta_bd):
-        self.ruta_bd = ruta_bd
+    def __init__(self, direccion, bd):
+        self.bd = bd
         super().__init__(direccion, ManejadorHTTP)
 
 
@@ -206,8 +204,8 @@ class ManejadorHTTP(BaseHTTPRequestHandler):
             return None
         return galleta[COOKIE_SESION].value if COOKIE_SESION in galleta else None
 
-    def _usuario_actual(self, conn):
-        return CuentasServicio(conn).usuario_de_sesion(self._token())
+    def _usuario_actual(self, conexion):
+        return CuentasServicio(conexion).usuario_de_sesion(self._token())
 
     def _atender_api(self, metodo, url):
         encontrada, argumentos, ruta_existe = None, (), False
@@ -228,17 +226,28 @@ class ManejadorHTTP(BaseHTTPRequestHandler):
 
         funcion, publica, rol = encontrada
         try:
-            with closing(conectar(self.server.ruta_bd)) as conn:
-                usuario = self._usuario_actual(conn)
+            with self.server.bd.conexion() as conexion:
+                usuario = self._usuario_actual(conexion)
+                if usuario:
+                    # En el historial de SBD, cada cambio queda firmado por quien lo hizo
+                    conexion.firmar(f"inventario · {usuario['usuario']}")
                 if not publica and usuario is None:
                     raise NoAutorizado("Tu sesión ha caducado. Vuelve a entrar.")
                 if rol and (usuario is None or usuario["rol"] != rol):
                     raise Prohibido("Esta acción solo la puede hacer un administrador")
                 consulta = {clave: valores[0] for clave, valores in parse_qs(url.query).items()}
                 cuerpo = self._leer_json() if metodo in ("POST", "PUT") else {}
-                resultado = funcion(Contexto(conn), Peticion(consulta, cuerpo, usuario, self._token()), *argumentos)
+                resultado = funcion(Contexto(conexion), Peticion(consulta, cuerpo, usuario, self._token()), *argumentos)
         except ErrorInventario as error:
             self._enviar_json(error.estado, error.como_dict())
+            return
+        except BaseOcupada:
+            self._enviar_json(HTTPStatus.SERVICE_UNAVAILABLE,
+                              {"error": "La base de datos está ocupada con otra operación. Inténtalo en un momento."})
+            return
+        except SBDError as error:
+            log.error("SBD rechazó la orden en %s %s: %s", metodo, url.path, error)
+            self._enviar_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"Error de la base de datos: {error}"})
             return
         except Exception:
             log.exception("Error no controlado en %s %s", metodo, url.path)
@@ -284,8 +293,8 @@ class ManejadorHTTP(BaseHTTPRequestHandler):
         relativa = unquote(ruta_url).lstrip("/") or PAGINA_APP
         # La aplicación pide sesión; la pantalla de acceso, no tenerla
         if relativa in (PAGINA_APP, PAGINA_ACCESO):
-            with closing(conectar(self.server.ruta_bd)) as conn:
-                conectado = self._usuario_actual(conn) is not None
+            with self.server.bd.conexion() as conexion:
+                conectado = self._usuario_actual(conexion) is not None
             if relativa == PAGINA_APP and not conectado:
                 self._redirigir(f"/{PAGINA_ACCESO}")
                 return
@@ -331,7 +340,7 @@ class ManejadorHTTP(BaseHTTPRequestHandler):
             self.wfile.write(cuerpo)
 
 
-def crear_servidor(host, puerto, ruta_bd):
-    with closing(conectar(ruta_bd)) as conn:
-        inicializar(conn)
-    return ServidorInventario((host, puerto), ruta_bd)
+def crear_servidor(host, puerto, bd):
+    """`bd` es la BaseDatos del programa; aquí se aplican sus migraciones pendientes."""
+    bd.preparar()
+    return ServidorInventario((host, puerto), bd)

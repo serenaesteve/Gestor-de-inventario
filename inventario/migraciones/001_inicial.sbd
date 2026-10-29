@@ -1,0 +1,61 @@
+-- =====================================================================
+--  Migración 001 · Esquema inicial: ajustes, productos, movimientos y
+--  la vista de existencias
+-- =====================================================================
+--  Reglas que garantiza la propia base de datos (no solo la aplicación):
+--   · El stock nunca puede ser negativo                  (comprobar)
+--   · El código de producto no se repite                  (unico)
+--   · Cada movimiento apunta a un producto que existe     (->, al borrar impedir)
+--   · stock_resultante = stock_anterior + cantidad        (comprobar)
+--   · Los importes son exactos, sin errores de redondeo   (dinero)
+--  La migración la ejecuta inventario/bd.py dentro de «empezar … confirmar».
+-- =====================================================================
+
+-- Ajustes clave-valor de la instalación: versión del esquema, material de ejemplo…
+crear tabla ajustes {
+  clave  texto clave
+  valor  texto obligatorio
+}
+
+crear tabla productos {
+  id              entero clave
+  codigo          texto(30) obligatorio unico comprobar longitud(recortar(codigo)) > 0
+  nombre          texto(120) obligatorio comprobar longitud(recortar(nombre)) > 0
+  descripcion     texto(500) = ""
+  categoria       texto(50) = "General"
+  precio          dinero = 0 comprobar precio >= 0
+  stock_minimo    entero = 0 comprobar stock_minimo >= 0
+  stock_actual    entero = 0 comprobar stock_actual >= 0
+  -- Borrado lógico: un producto con historial no se elimina, se da de baja
+  activo          logico = verdadero
+  creado_en       fechahora = ahora()
+  actualizado_en  fechahora = ahora()
+}
+indexar productos (categoria)
+
+crear tabla movimientos {
+  id                entero clave
+  producto_id       entero obligatorio -> productos(id)
+  tipo              texto obligatorio comprobar tipo en ["ENTRADA", "SALIDA", "AJUSTE"]
+  -- Cantidad con signo: positiva suma stock, negativa lo resta
+  cantidad          entero obligatorio
+  stock_anterior    entero obligatorio comprobar stock_anterior >= 0
+  stock_resultante  entero obligatorio comprobar stock_resultante >= 0
+  motivo            texto(200) = ""
+  fecha             fechahora = ahora()
+  comprobar (tipo = "ENTRADA" y cantidad > 0) o (tipo = "SALIDA" y cantidad < 0) o (tipo = "AJUSTE" y cantidad != 0)
+  comprobar stock_resultante = stock_anterior + cantidad
+}
+indexar movimientos (producto_id)
+indexar movimientos (fecha)
+
+-- Existencias con el estado y el valor ya calculados
+crear vista v_existencias = buscar productos mostrar
+  id, codigo, nombre, descripcion, categoria, precio, stock_minimo, stock_actual, activo,
+  creado_en, actualizado_en,
+  stock_actual * precio como valor,
+  caso
+    cuando stock_actual = 0 entonces "AGOTADO"
+    cuando stock_actual <= stock_minimo entonces "BAJO"
+    sino "OK"
+  fin como estado

@@ -81,8 +81,8 @@
         <article class="escena__panel">
           <p class="escena__num">02 · Recepción</p>
           <h2 id="t-recepcion">Cada entrada, sellada.</h2>
-          <p>El albarán se registra en una sola transacción: se suma el stock y se anota el movimiento. O se guardan las dos cosas, o ninguna.</p>
-          <ul class="escena__etiquetas"><li>BEGIN IMMEDIATE</li><li>COMMIT · ROLLBACK</li></ul>
+          <p>El albarán se registra en una sola transacción de SBD: se suma el stock y se anota el movimiento. O se guardan las dos cosas, o ninguna.</p>
+          <ul class="escena__etiquetas"><li>empezar</li><li>confirmar · deshacer</li></ul>
         </article>
       </div>
     </section>
@@ -93,7 +93,7 @@
           <p class="escena__num">03 · Estanterías</p>
           <h2 id="t-pasillos">Cada referencia, en su hueco.</h2>
           <p>Código único y un stock mínimo que avisa antes de quedarse sin nada. Cuando el teclado agotado se repone, su etiqueta cambia sola.</p>
-          <ul class="escena__etiquetas"><li>UNIQUE COLLATE NOCASE</li><li>Vista v_existencias</li></ul>
+          <ul class="escena__etiquetas"><li>codigo texto unico</li><li>crear vista v_existencias</li></ul>
         </article>
       </div>
     </section>
@@ -104,7 +104,7 @@
           <p class="escena__num">04 · Expedición</p>
           <h2 id="t-expedicion">Lo que sale, se descuenta.</h2>
           <p>Nunca más de lo que hay: aunque la aplicación se equivocara, la base de datos rechaza un stock negativo.</p>
-          <ul class="escena__etiquetas"><li>CHECK (stock_actual &gt;= 0)</li><li>Control optimista</li></ul>
+          <ul class="escena__etiquetas"><li>comprobar stock_actual &gt;= 0</li><li>Control optimista</li></ul>
         </article>
       </div>
     </section>
@@ -114,8 +114,8 @@
         <article class="escena__panel">
           <p class="escena__num">05 · Libro Kardex</p>
           <h2 id="t-kardex">Y nada se borra.</h2>
-          <p>Cada movimiento queda anotado para siempre: un trigger impide modificarlo, y el saldo es siempre la suma de todos sus asientos.</p>
-          <ul class="escena__etiquetas"><li>Trigger inmutable</li><li>Saldo = Σ movimientos</li></ul>
+          <p>Cada movimiento queda anotado para siempre: el programa solo sabe añadir asientos, nunca cambiarlos, y el saldo es siempre la suma de todos ellos.</p>
+          <ul class="escena__etiquetas"><li>Solo insertar</li><li>Saldo = Σ movimientos</li></ul>
         </article>
       </div>
     </section>

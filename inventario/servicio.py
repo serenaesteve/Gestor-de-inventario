@@ -8,20 +8,19 @@ o los tests.
 
 import csv
 import io
-import sqlite3
 
 from . import validacion as v
-from .conexion import transaccion
+from .bd import SBDError
 from .errores import Conflicto, ErrorValidacion, NoEncontrado
 from .movimiento_dao import TIPOS, MovimientoDAO
 from .producto_dao import ESTADOS, ProductoDAO
 
 
 class InventarioServicio:
-    def __init__(self, conn):
-        self._conn = conn
-        self.productos = ProductoDAO(conn)
-        self.movimientos = MovimientoDAO(conn)
+    def __init__(self, conexion):
+        self._con = conexion
+        self.productos = ProductoDAO(conexion)
+        self.movimientos = MovimientoDAO(conexion)
 
     # ------------------------------------------------------------------ productos
 
@@ -42,11 +41,11 @@ class InventarioServicio:
         stock_inicial = v.entero(datos, "stock_inicial", "El stock inicial", defecto=0, maximo=1_000_000)
         try:
             # Alta y stock inicial van juntos: o se guardan los dos o ninguno
-            with transaccion(self._conn):
+            with self._con.transaccion():
                 producto_id = self.productos.insertar(campos)
                 if stock_inicial:
                     self._aplicar_movimiento(producto_id, "ENTRADA", stock_inicial, "Stock inicial", usuario_id=usuario_id)
-        except sqlite3.IntegrityError as error:
+        except SBDError as error:
             raise _traducir_integridad(error, campos) from None
         return self.obtener_producto(producto_id)
 
@@ -54,7 +53,7 @@ class InventarioServicio:
         campos = _validar_producto(datos)
         try:
             actualizado = self.productos.actualizar(producto_id, campos)
-        except sqlite3.IntegrityError as error:
+        except SBDError as error:
             raise _traducir_integridad(error, campos) from None
         if not actualizado:
             raise NoEncontrado(f"No existe el producto {producto_id} o está dado de baja")
@@ -79,13 +78,13 @@ class InventarioServicio:
         )
         motivo = v.texto(datos, "motivo", "El motivo", maximo=200, obligatorio=False)
 
-        with transaccion(self._conn):
+        with self._con.transaccion():
             movimiento_id = self._aplicar_movimiento(producto_id, tipo, cantidad, motivo, usuario_id=usuario_id)
         return self.movimientos.obtener(movimiento_id)
 
     def importar_movimiento(self, producto_id, tipo, cantidad, motivo, *, fecha, usuario_id=None):
         """Registra un movimiento con fecha pasada. Solo lo usan los datos de ejemplo."""
-        with transaccion(self._conn):
+        with self._con.transaccion():
             return self._aplicar_movimiento(producto_id, tipo, cantidad, motivo, usuario_id=usuario_id, fecha=fecha)
 
     def listar_movimientos(self, filtros):
@@ -168,15 +167,17 @@ def _validar_producto(datos):
         "nombre": v.texto(datos, "nombre", "El nombre", maximo=120),
         "descripcion": v.texto(datos, "descripcion", "La descripción", maximo=500, obligatorio=False),
         "categoria": v.texto(datos, "categoria", "La categoría", maximo=50, obligatorio=False) or "General",
-        "precio_centimos": v.importe_en_centimos(datos, "precio", "El precio"),
+        "precio": v.importe(datos, "precio", "El precio"),
         "stock_minimo": v.entero(datos, "stock_minimo", "El stock mínimo", defecto=0, maximo=1_000_000),
     }
 
 
 def _traducir_integridad(error, campos):
-    if "UNIQUE" in str(error) and "codigo" in str(error):
+    """Un error de SBD al guardar, explicado para quien usa la aplicación."""
+    texto = str(error)
+    if "codigo" in texto and "único" in texto:
         return Conflicto(f"Ya existe un producto con el código «{campos['codigo']}»", "codigo")
-    return ErrorValidacion(f"Los datos no cumplen las restricciones de la base de datos ({error})")
+    return ErrorValidacion(f"Los datos no cumplen las reglas de la base de datos: {texto}")
 
 
 def _euros(importe):

@@ -3,7 +3,7 @@
 import re
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from . import seguridad
 from . import validacion as v
@@ -21,22 +21,14 @@ _fallos = {}
 _cerrojo = threading.Lock()
 
 
-def _ahora():
-    return datetime.now(timezone.utc)
-
-
-def _iso(momento):
-    return momento.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def _publico(fila):
     return {"id": fila["id"], "usuario": fila["usuario"], "nombre": fila["nombre"], "rol": fila["rol"]}
 
 
 class CuentasServicio:
-    def __init__(self, conn):
-        self._conn = conn
-        self.usuarios = UsuarioDAO(conn)
+    def __init__(self, conexion):
+        self._con = conexion
+        self.usuarios = UsuarioDAO(conexion)
 
     def hay_usuarios(self):
         return self.usuarios.contar() > 0
@@ -76,16 +68,16 @@ class CuentasServicio:
         _olvidar_fallos(usuario)
 
         token = seguridad.nuevo_token()
-        ahora = _ahora()
-        self.usuarios.purgar_sesiones(_iso(ahora))
-        self.usuarios.crear_sesion(seguridad.huella_token(token), fila["id"], _iso(ahora + DURACION_SESION))
-        self.usuarios.registrar_acceso(fila["id"], _iso(ahora))
+        with self._con.transaccion():
+            self.usuarios.purgar_sesiones()
+            self.usuarios.crear_sesion(seguridad.huella_token(token), fila["id"], DURACION_SESION.total_seconds() / 3600)
+            self.usuarios.registrar_acceso(fila["id"])
         return token, _publico(fila)
 
     def usuario_de_sesion(self, token):
         if not token:
             return None
-        return self.usuarios.usuario_de_sesion(seguridad.huella_token(token), _iso(_ahora()))
+        return self.usuarios.usuario_de_sesion(seguridad.huella_token(token))
 
     def cerrar_sesion(self, token):
         if token:
