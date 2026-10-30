@@ -16,6 +16,23 @@ from .movimiento_dao import TIPOS, MovimientoDAO
 from .producto_dao import ESTADOS, ProductoDAO
 
 
+# El visitante de la demostración solo elige entre estos conceptos (los mismos que propone el albarán,
+# en static/js/app.js): es lo único que escribiría y que verían los demás visitantes
+MOTIVOS_DEMO = {
+    "", "Compra a proveedor", "Devolución de cliente", "Traspaso desde otro almacén",
+    "Venta", "Consumo interno", "Merma o rotura", "Devolución a proveedor",
+    "Inventario físico", "Corrección de un error",
+}
+MAX_CANTIDAD_DEMO = 500
+
+
+def comprobar_movimiento_demo(datos):
+    if str(datos.get("motivo", "")).strip() not in MOTIVOS_DEMO:
+        raise ErrorValidacion("En la demostración, elige uno de los conceptos propuestos", "motivo")
+    if v.entero(datos, "cantidad", "La cantidad") > MAX_CANTIDAD_DEMO:
+        raise ErrorValidacion(f"En la demostración, la cantidad no puede superar {MAX_CANTIDAD_DEMO}", "cantidad")
+
+
 class InventarioServicio:
     def __init__(self, conexion):
         self._con = conexion

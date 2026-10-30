@@ -4,14 +4,19 @@ Se carga solo cuando la base de datos está vacía. El historial se simula con u
 semilla fija, así que siempre sale el mismo almacén, con fechas relativas a hoy.
 """
 
+import logging
 import random
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from .bd import texto_fecha
 from .cuentas import CuentasServicio
 from .servicio import InventarioServicio
 
+log = logging.getLogger("inventario")
+
 DIAS_DE_HISTORIAL = 45
+HORA_RESTABLECIMIENTO = 4  # hora del servidor (UTC: las 5 o las 6 de la mañana en España)
+AJUSTE_RESTABLECIDA = "demo_restablecida"
 
 # usuario, nombre, contraseña, rol. El aviso de la pantalla de acceso los muestra.
 USUARIOS_EJEMPLO = [
@@ -115,13 +120,32 @@ def _historial(azar, minimo, ahora, codigo):
     return eventos
 
 
-def cargar_demo(bd, semilla=2026):
+def _cargar_referencias(inventario, azar, ahora, ids_usuario):
+    """Da de alta las referencias con su historial. Devuelve cuántos movimientos ha registrado."""
+    movimientos = 0
+    for codigo, nombre, categoria, precio, minimo, descripcion in REFERENCIAS:
+        producto = inventario.crear_producto({
+            "codigo": codigo, "nombre": nombre, "categoria": categoria,
+            "precio": str(precio), "stock_minimo": minimo, "descripcion": descripcion,
+        })
+        eventos = _historial(azar, minimo, ahora, codigo)
+        inventario.productos.fijar_creado_en(producto["id"], texto_fecha(eventos[0][0]))
+        for fecha, tipo, cantidad, motivo, quien in eventos:
+            inventario.importar_movimiento(
+                producto["id"], tipo, cantidad, motivo, fecha=texto_fecha(fecha), usuario_id=ids_usuario[quien]
+            )
+            movimientos += 1
+    return movimientos
+
+
+def cargar_demo(bd, semilla=2026, contrasenas=None):
     """Carga el material de ejemplo si no hay ninguna referencia. Devuelve un resumen o None.
 
-    `bd` es la BaseDatos del programa (SBD local o servidor).
+    `bd` es la BaseDatos del programa (SBD local o servidor). `contrasenas` ({usuario: contraseña})
+    sustituye a las de USUARIOS_EJEMPLO, que son públicas: en internet no se pueden usar.
     """
     bd.preparar()
-    with bd.conexion("inventario · material de ejemplo") as conexion:
+    with bd.conexion("inventario · material de ejemplo", auditar=False) as conexion:
         inventario = InventarioServicio(conexion)
         if inventario.productos.contar():
             return None
@@ -132,21 +156,46 @@ def cargar_demo(bd, semilla=2026):
         ids_usuario = {}
         for usuario, nombre, contrasena, rol in USUARIOS_EJEMPLO:
             existente = cuentas.usuarios.por_usuario(usuario)
+            if contrasenas:
+                contrasena = contrasenas[usuario]
             ids_usuario[usuario] = existente["id"] if existente else cuentas.crear_usuario(usuario, nombre, contrasena, rol)["id"]
 
-        movimientos = 0
-        for codigo, nombre, categoria, precio, minimo, descripcion in REFERENCIAS:
-            producto = inventario.crear_producto({
-                "codigo": codigo, "nombre": nombre, "categoria": categoria,
-                "precio": str(precio), "stock_minimo": minimo, "descripcion": descripcion,
-            })
-            eventos = _historial(azar, minimo, ahora, codigo)
-            inventario.productos.fijar_creado_en(producto["id"], texto_fecha(eventos[0][0]))
-            for fecha, tipo, cantidad, motivo, quien in eventos:
-                inventario.importar_movimiento(
-                    producto["id"], tipo, cantidad, motivo, fecha=texto_fecha(fecha), usuario_id=ids_usuario[quien]
-                )
-                movimientos += 1
-
+        movimientos = _cargar_referencias(inventario, azar, ahora, ids_usuario)
         cuentas.marcar_datos_de_ejemplo()
         return {"referencias": len(REFERENCIAS), "movimientos": movimientos, "dias": DIAS_DE_HISTORIAL}
+
+
+def restablecer_demo(bd, semilla=2026):
+    """Vuelve a dejar el material de ejemplo como nuevo, con las fechas al día. Los usuarios no se tocan.
+
+    Es la única excepción a «el historial solo crece» de todo el programa, y solo existe en una
+    instalación de demostración (--demostracion): los datos son de mentira y los cambia cualquiera.
+    Va en una transacción: si algo fallara, todo sigue como estaba.
+    """
+    with bd.conexion("inventario · restablecer demostración", auditar=False) as conexion:
+        with conexion.transaccion():
+            conexion.ejecutar("vaciar movimientos")
+            conexion.ejecutar("vaciar productos")
+            cuentas = CuentasServicio(conexion)
+            ids_usuario = {u[0]: cuentas.usuarios.por_usuario(u[0])["id"] for u in USUARIOS_EJEMPLO}
+            _cargar_referencias(InventarioServicio(conexion), random.Random(semilla),
+                                datetime.now().replace(microsecond=0), ids_usuario)
+            cuentas.usuarios.guardar_ajuste(AJUSTE_RESTABLECIDA, date.today().isoformat())
+
+
+def toca_restablecer(bd, ahora=None):
+    ahora = ahora or datetime.now()
+    with bd.conexion("inventario · demostración", auditar=False) as conexion:
+        ultima = CuentasServicio(conexion).usuarios.leer_ajuste(AJUSTE_RESTABLECIDA)
+    return ahora.hour >= HORA_RESTABLECIMIENTO and ultima != ahora.date().isoformat()
+
+
+def vigilar_restablecimiento(bd, parar):
+    """Hilo de fondo: cada día, a partir de HORA_RESTABLECIMIENTO, restablece la demostración una vez."""
+    while not parar.wait(60):
+        try:
+            if toca_restablecer(bd):
+                restablecer_demo(bd)
+                log.info("Demostración restablecida")
+        except Exception:  # noqa: BLE001 (un fallo aquí no debe tumbar la web; se reintenta al minuto)
+            log.exception("No se ha podido restablecer la demostración")

@@ -19,10 +19,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from .bd import BaseOcupada, SBDError
-from .cuentas import DURACION_SESION, CuentasServicio
+from .cuentas import CONTRASENA_DEMO, DURACION_SESION, NOMBRE_DEMO, USUARIO_DEMO, CuentasServicio, frenar_visitante
 from .demo import USUARIOS_EJEMPLO
 from .errores import ErrorInventario, ErrorValidacion, NoAutorizado, Prohibido, TipoNoAdmitido
-from .servicio import InventarioServicio
+from .servicio import InventarioServicio, comprobar_movimiento_demo
 
 log = logging.getLogger("inventario")
 
@@ -46,8 +46,9 @@ def ruta(metodo, patron, *, publica=False, rol=None):
 
 
 class Peticion:
-    def __init__(self, consulta, cuerpo, usuario, token):
+    def __init__(self, consulta, cuerpo, usuario, token, ip=None, publico=False, demostracion=False):
         self.consulta, self.cuerpo, self.usuario, self.token = consulta, cuerpo, usuario, token
+        self.ip, self.publico, self.demostracion = ip, publico, demostracion
 
     @property
     def usuario_id(self):
@@ -70,34 +71,35 @@ class Archivo:
         self.nombre, self.contenido, self.tipo = nombre, contenido, tipo
 
 
-def _cookie_sesion(token, max_age):
-    return f"{COOKIE_SESION}={token}; Max-Age={max_age}; Path=/; HttpOnly; SameSite=Strict"
+def _cookie_sesion(token, max_age, segura):
+    # «Secure»: en internet, el navegador solo la envía por HTTPS
+    return f"{COOKIE_SESION}={token}; Max-Age={max_age}; Path=/; HttpOnly; SameSite=Strict" + ("; Secure" if segura else "")
 
 
 # ----------------------------------------------------------- sesión
 
 @ruta("GET", r"/api/sesion", publica=True)
 def _sesion(ctx, pet):
-    ejemplo = ctx.cuentas.datos_de_ejemplo()
-    return {
-        "usuario": pet.usuario,
-        "usuarios_ejemplo": [
-            {"usuario": u, "nombre": n, "contrasena": c, "rol": r} for u, n, c, r in USUARIOS_EJEMPLO
-        ] if ejemplo and not pet.usuario else [],
-    }
+    a_la_vista = []
+    if pet.demostracion:
+        a_la_vista = [{"usuario": USUARIO_DEMO, "nombre": NOMBRE_DEMO, "contrasena": CONTRASENA_DEMO,
+                       "rol": "operario", "demo": True}]
+    elif ctx.cuentas.datos_de_ejemplo() and not pet.publico:
+        a_la_vista = [{"usuario": u, "nombre": n, "contrasena": c, "rol": r} for u, n, c, r in USUARIOS_EJEMPLO]
+    return {"usuario": pet.usuario, "usuarios_ejemplo": [] if pet.usuario else a_la_vista}
 
 
 @ruta("POST", r"/api/sesion", publica=True)
 def _iniciar_sesion(ctx, pet):
-    token, usuario = ctx.cuentas.iniciar_sesion(pet.cuerpo)
+    token, usuario = ctx.cuentas.iniciar_sesion(pet.cuerpo, ip=pet.ip)
     max_age = int(DURACION_SESION.total_seconds())
-    return Respuesta({"usuario": usuario}, cabeceras={"Set-Cookie": _cookie_sesion(token, max_age)})
+    return Respuesta({"usuario": usuario}, cabeceras={"Set-Cookie": _cookie_sesion(token, max_age, pet.publico)})
 
 
 @ruta("DELETE", r"/api/sesion", publica=True)
 def _cerrar_sesion(ctx, pet):
     ctx.cuentas.cerrar_sesion(pet.token)
-    return Respuesta(estado=HTTPStatus.NO_CONTENT, cabeceras={"Set-Cookie": _cookie_sesion("", 0)})
+    return Respuesta(estado=HTTPStatus.NO_CONTENT, cabeceras={"Set-Cookie": _cookie_sesion("", 0, pet.publico)})
 
 
 # ---------------------------------------------------------- inventario
@@ -149,6 +151,9 @@ def _listar_movimientos(ctx, pet):
 
 @ruta("POST", r"/api/movimientos")
 def _registrar_movimiento(ctx, pet):
+    if pet.usuario["demo"]:
+        comprobar_movimiento_demo(pet.cuerpo)
+        frenar_visitante(pet.ip)
     return HTTPStatus.CREATED, ctx.inventario.registrar_movimiento(pet.cuerpo, usuario_id=pet.usuario_id)
 
 
@@ -163,13 +168,16 @@ def _exportar_csv(ctx, pet):
 class ServidorInventario(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, direccion, bd):
+    def __init__(self, direccion, bd, publico=False, demostracion=False):
         self.bd = bd
+        self.publico = publico  # en internet, detrás de un proxy con HTTPS
+        self.demostracion = demostracion  # con el usuario visitante a la vista
         super().__init__(direccion, ManejadorHTTP)
 
 
 class ManejadorHTTP(BaseHTTPRequestHandler):
     server_version = "GestorInventario/1.0"
+    timeout = 30  # una conexión que no envía nada no retiene su hilo para siempre
 
     def do_GET(self):
         self._atender("GET")
@@ -184,7 +192,13 @@ class ManejadorHTTP(BaseHTTPRequestHandler):
         self._atender("DELETE")
 
     def log_message(self, formato, *args):
-        log.info("%s %s", self.address_string(), formato % args)
+        log.info("%s %s", self._ip(), formato % args)
+
+    def _ip(self):
+        """La dirección del cliente. Detrás del proxy, la última de X-Forwarded-For, que es la que
+        añade Apache: las anteriores las escribe el propio cliente y podrían ser falsas."""
+        reenviada = self.headers.get("X-Forwarded-For") if self.server.publico and self.headers else None
+        return reenviada.split(",")[-1].strip() if reenviada else self.client_address[0]
 
     # -------------------------------------------------------------- despacho
 
@@ -237,7 +251,9 @@ class ManejadorHTTP(BaseHTTPRequestHandler):
                     raise Prohibido("Esta acción solo la puede hacer un administrador")
                 consulta = {clave: valores[0] for clave, valores in parse_qs(url.query).items()}
                 cuerpo = self._leer_json() if metodo in ("POST", "PUT") else {}
-                resultado = funcion(Contexto(conexion), Peticion(consulta, cuerpo, usuario, self._token()), *argumentos)
+                peticion = Peticion(consulta, cuerpo, usuario, self._token(), self._ip(),
+                                    self.server.publico, self.server.demostracion)
+                resultado = funcion(Contexto(conexion), peticion, *argumentos)
         except ErrorInventario as error:
             self._enviar_json(error.estado, error.como_dict())
             return
@@ -340,7 +356,7 @@ class ManejadorHTTP(BaseHTTPRequestHandler):
             self.wfile.write(cuerpo)
 
 
-def crear_servidor(host, puerto, bd):
+def crear_servidor(host, puerto, bd, publico=False, demostracion=False):
     """`bd` es la BaseDatos del programa; aquí se aplican sus migraciones pendientes."""
     bd.preparar()
-    return ServidorInventario((host, puerto), bd)
+    return ServidorInventario((host, puerto), bd, publico, demostracion)

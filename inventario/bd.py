@@ -17,6 +17,7 @@ from pathlib import Path
 
 import sbd
 from sbd import BaseOcupada, SBDError
+from sbd.parser import Parser
 
 BASE = "inventario"
 DIR_MIGRACIONES = Path(__file__).with_name("migraciones")
@@ -47,11 +48,18 @@ def texto_fecha(momento):
 class _Local:
     """Órdenes contra un sbd.Servidor de este mismo proceso."""
 
-    def __init__(self, servidor, base, etiqueta):
+    def __init__(self, servidor, base, etiqueta, auditar=True):
         self.sesion = sbd.Sesion(servidor, base, etiqueta=etiqueta)
+        self.auditar = auditar
 
     def ejecutar(self, orden, params):
-        return self.sesion.ejecutar(orden, params)
+        if self.auditar:
+            return self.sesion.ejecutar(orden, params)
+        # Cargas masivas: sin «texto» la orden no se anota en el historial de SBD
+        resultado = None
+        for nodo, _ in Parser(orden).parse_script_spans():
+            resultado = self.sesion.ejecutar_orden(nodo, tuple(params))
+        return resultado
 
     def empezar(self):
         self.sesion.ejecutar("empezar")
@@ -185,9 +193,9 @@ class BaseDatos:
         return self._cliente is not None
 
     @contextmanager
-    def conexion(self, quien="inventario"):
+    def conexion(self, quien="inventario", auditar=True):
         with self._cerrojo:
-            ejecutor = _Remoto(self._cliente) if self.remota else _Local(self._servidor, self.base, quien)
+            ejecutor = _Remoto(self._cliente) if self.remota else _Local(self._servidor, self.base, quien, auditar)
             conexion = Conexion(ejecutor)
             try:
                 yield conexion

@@ -27,7 +27,7 @@ La aplicación pide **iniciar sesión**. Con el material de ejemplo hay dos usua
 
 El material de ejemplo son 28 referencias en 6 categorías con unos 45 días de historial (más de 500 movimientos con su fecha y su autor), con referencias en stock, bajo mínimo y agotadas.
 
-Para pasar las pruebas automáticas (38 tests):
+Para pasar las pruebas automáticas (60 tests):
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -62,6 +62,22 @@ SBD_CLAVE=sbd_… python3 app.py --sbd-servidor http://127.0.0.1:8095
 ```
 
 La primera vez, el inventario crea sus tablas (con sus migraciones) y el material de ejemplo a través de la API de SBD.
+
+### En internet
+
+`python3 app.py --publico` es el modo para publicarlo detrás de un proxy con HTTPS:
+
+- La pantalla de acceso no enseña ningún usuario y las contraseñas de ejemplo no valen: cada instalación genera las suyas y las guarda en `credenciales-iniciales.txt`, dentro de la carpeta de datos, legible solo por el servicio y `root`. Bórralo cuando las hayas apuntado.
+- La cookie de sesión lleva `Secure`.
+- Además del bloqueo por usuario, se limitan los intentos fallidos por dirección IP (20 cada 5 minutos). La IP se toma de lo que añade el proxy, no de lo que escribe el cliente.
+
+`python3 app.py --publico --demostracion` añade un usuario **visitante** a la vista en la pantalla de acceso, para que cualquiera pueda probarlo sin registrarse:
+
+- Puede consultar todo y registrar movimientos, pero no crear ni editar referencias. El concepto se elige de la lista (no escribe texto libre) y la cantidad llega hasta 500.
+- Sus entradas y cambios están limitados por IP (30 cada 10 minutos) y en total (500 cada 10 minutos). Nadie puede bloquearlo fallando su contraseña.
+- **Cada noche, a partir de las 04:00 del servidor, se vacían `movimientos` y `productos` y se regenera el material de ejemplo con las fechas al día**, también lo que hayan cambiado los demás usuarios. Los usuarios y sus sesiones se conservan. Va en una transacción: si falla, todo sigue como estaba.
+
+`despliegue/` tiene lo necesario para publicarlo en `inventario.serenaesteve.com`: servicio de systemd con su propio usuario, Apache con HTTPS y certificado de Let's Encrypt. `sudo bash despliegue/desplegar.sh` lo instala o lo actualiza; el despliegue no toca los datos de `/srv/inventario/datos`, pero el servicio arranca con `--demostracion`, así que el restablecimiento nocturno sí los regenera.
 
 ## Recorrido «Del muelle al Kardex» (para presentar)
 
@@ -163,7 +179,7 @@ La vista **`v_existencias`** añade a cada producto su `estado` (`OK`, `BAJO` o 
 2. **Control de concurrencia optimista.** El `actualizar` del stock lleva `donde stock_actual = <valor leído>`. Si no cambia ninguna fila, alguien lo cambió antes y se aborta.
 3. **Parámetros siempre.** Ningún valor del usuario se pega al texto de la orden: todos van como parámetros `?`. Las búsquedas usan `contiene`, que busca el texto tal cual, así que «50%» encuentra literalmente «50%».
 4. **La base de datos se defiende sola.** Aunque la aplicación tuviera un fallo, SBD rechaza el stock negativo, los códigos repetidos, los movimientos de productos inexistentes y los movimientos incoherentes (`comprobar`, `unico`, `->`). Hay tests que lo comprueban saltándose la aplicación.
-5. **Historial que solo crece.** SBD todavía no tiene disparadores, así que esta regla la garantiza el programa: `MovimientoDAO` solo sabe insertar y consultar, y no hay ninguna orden `actualizar movimientos` ni `borrar de movimientos` en todo el código. Gracias a eso se cumple siempre que *stock actual = suma de todas las cantidades de sus movimientos*, y hay un test que lo verifica. Por la misma razón, `actualizado_en` lo pone cada `actualizar` del DAO con `ahora()`.
+5. **Historial que solo crece.** SBD todavía no tiene disparadores, así que esta regla la garantiza el programa: `MovimientoDAO` solo sabe insertar y consultar, y no hay ninguna orden `actualizar movimientos` ni `borrar de movimientos` en todo el código. La única excepción es `restablecer_demo`, que solo se ejecuta con `--demostracion`, donde los datos son de ejemplo y se regeneran enteros cada noche. Gracias a eso se cumple siempre que *stock actual = suma de todas las cantidades de sus movimientos*, y hay un test que lo verifica. Por la misma razón, `actualizado_en` lo pone cada `actualizar` del DAO con `ahora()`.
 6. **Borrado lógico.** Un producto con historial no se borra: se marca `activo = falso` y sus movimientos se conservan.
 7. **Dinero exacto.** Los precios son del tipo `dinero` de SBD: dos decimales exactos, sin errores de coma flotante. En Python se validan con `Decimal`.
 8. **Migraciones del esquema** (`inventario/migraciones/001_inicial.sbd`, `002_usuarios.sbd`), escritas en SBD. La versión se guarda en la tabla `ajustes` y cada migración se aplica en su propia transacción, junto con el cambio de versión. Una base de la versión 1 se actualiza sola a la 2 al arrancar, sin perder datos: la 2 añade las tablas de usuarios y sesiones y la columna `movimientos.usuario_id` con `añadir a`.
@@ -212,6 +228,7 @@ gestor-inventario/
 │   └── demo.py             material de ejemplo (referencias, usuarios e historial)
 ├── sbd/                    el motor SBD (copia de la versión 3.1.1, con su consola y su panel)
 ├── static/                 frontend (js/app.js · js/nave.js 3D · js/code128.js · vendor/three)
+├── despliegue/             servicio de systemd, Apache y script para publicarlo
 ├── datos/                  se crea al arrancar: inventario.base
 └── tests/                  pruebas unitarias y de integración
 ```

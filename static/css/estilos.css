@@ -211,6 +211,9 @@ h1, .rotulo__pasillo, .tablero__etiqueta, .hoja__cabecera h2 {
   padding: 0 var(--e-7);
 }
 .cinta { height: 6px; background: var(--cinta-seguridad); }
+.nave__demo { padding: var(--e-1) var(--e-4); background: var(--banda-2); color: var(--banda-texto-2); font-size: var(--t-xs); text-align: center; }
+.nave__demo[hidden] { display: none; }
+.nave__demo strong { color: var(--senal); }
 
 .marca {
   display: flex;

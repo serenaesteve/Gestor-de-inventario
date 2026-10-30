@@ -1193,9 +1193,16 @@ function conectarEventos() {
 function pintarUsuario(usuario) {
   estado.usuario = usuario;
   document.body.dataset.rol = usuario.rol;
+  if (usuario.demo) {
+    // El visitante elige el concepto de la lista: no escribe nada que vayan a ver los demás
+    $('#aviso-demo').hidden = false;
+    const motivo = $('#mov-motivo');
+    motivo.readOnly = true;
+    motivo.placeholder = 'Elige uno de los conceptos de abajo';
+  }
   pintar($('#usuario-actual'), html`
     <span class="usuario__inicial" aria-hidden="true">${usuario.nombre.charAt(0)}</span>
-    <span class="usuario__texto"><strong>${usuario.nombre}</strong><small>${usuario.rol === 'admin' ? 'Administración' : 'Operario'}</small></span>`);
+    <span class="usuario__texto"><strong>${usuario.nombre}</strong><small>${usuario.demo ? 'Demostración' : usuario.rol === 'admin' ? 'Administración' : 'Operario'}</small></span>`);
 }
 
 async function iniciar() {

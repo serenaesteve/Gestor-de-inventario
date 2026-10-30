@@ -100,9 +100,20 @@ async function mostrarUsuariosEjemplo() {
       credenciales.textContent = `${cuenta.usuario} · ${cuenta.contrasena}`;
       textos.append(fila, credenciales);
       boton.append(inicial, textos);
+      if (cuenta.demo) {
+        document.getElementById('t-ejemplo').textContent = '¿Solo quieres verlo?';
+        document.getElementById('texto-ejemplo').textContent =
+          'Entra como visitante y registra entradas y salidas. Todo vuelve a su estado original cada noche.';
+        rol.remove();
+        credenciales.textContent = 'Entrar sin registrarse';
+      }
       boton.addEventListener('click', () => {
         formulario.elements.usuario.value = cuenta.usuario;
         formulario.elements.contrasena.value = cuenta.contrasena;
+        if (cuenta.demo) {
+          formulario.requestSubmit();
+          return;
+        }
         formulario.querySelector('[type="submit"]').focus();
       });
       const item = document.createElement('li');

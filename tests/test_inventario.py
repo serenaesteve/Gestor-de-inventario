@@ -3,21 +3,29 @@
     python -m unittest discover -s tests -v
 """
 
+import io
 import json
 import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
+from contextlib import redirect_stdout
+from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
+from unittest import mock
 
 from inventario import cuentas, seguridad
 from inventario.api import crear_servidor
 from inventario.bd import VERSION_ESQUEMA, BaseDatos, SBDError, migraciones, version_actual
 from inventario.cuentas import CuentasServicio
-from inventario.demo import cargar_demo
+from app import FICHERO_CREDENCIALES, preparar_datos
+from inventario import demo
+from inventario.demo import USUARIOS_EJEMPLO, cargar_demo
 from inventario.errores import Conflicto, DemasiadosIntentos, ErrorValidacion, NoAutorizado, NoEncontrado
-from inventario.servicio import InventarioServicio
+from inventario.movimiento_dao import MovimientoDAO
+from inventario.servicio import MOTIVOS_DEMO, InventarioServicio
 
 # PBKDF2 con 600 000 iteraciones es lento a propósito; en los tests basta con pocas
 seguridad.ITERACIONES = 1_000
@@ -261,6 +269,26 @@ class CuentasTest(ConSBD):
         with self.assertRaises(DemasiadosIntentos):
             self.cuentas.iniciar_sesion({"usuario": "ana", "contrasena": "contraseña-larga"})
 
+    def test_limite_por_ip_aunque_cambie_el_usuario(self):
+        for n in range(cuentas.MAX_FALLOS_IP):
+            with self.assertRaises(NoAutorizado):
+                self.cuentas.iniciar_sesion({"usuario": f"nadie{n}", "contrasena": "x"}, ip="203.0.113.9")
+        with self.assertRaises(DemasiadosIntentos):
+            self.cuentas.iniciar_sesion({"usuario": "ana", "contrasena": "contraseña-larga"}, ip="203.0.113.9")
+        # Desde otra dirección se sigue pudiendo entrar
+        self.cuentas.iniciar_sesion({"usuario": "ana", "contrasena": "contraseña-larga"}, ip="203.0.113.10")
+
+    def test_los_fallos_antiguos_caducan(self):
+        for _ in range(cuentas.MAX_FALLOS - 1):
+            with self.assertRaises(NoAutorizado):
+                self.cuentas.iniciar_sesion({"usuario": "ana", "contrasena": "mala"})
+        fallos, desde = cuentas._fallos["usuario:ana"]
+        cuentas._fallos["usuario:ana"] = (fallos, desde - cuentas.BLOQUEO_SEGUNDOS - 1)
+        with self.assertRaises(NoAutorizado):  # este cuenta como el primero, no como el quinto
+            self.cuentas.iniciar_sesion({"usuario": "ana", "contrasena": "mala"})
+        self.assertEqual(cuentas._fallos["usuario:ana"][0], 1)
+        self.cuentas.iniciar_sesion({"usuario": "ana", "contrasena": "contraseña-larga"})
+
     def test_sesion_caducada(self):
         token, _ = self.cuentas.iniciar_sesion({"usuario": "ana", "contrasena": "contraseña-larga"})
         self.conn.ejecutar("actualizar sesiones poner expira_en = 2000-01-01 00:00 todas")
@@ -445,6 +473,219 @@ class ApiTest(unittest.TestCase):
             with self.subTest(ruta=ruta), self.assertRaises(urllib.error.HTTPError) as ctx:
                 self.navegador.open(self.url + ruta)
             self.assertEqual(ctx.exception.code, 404)
+
+
+class ModoPublicoTest(unittest.TestCase):
+    """--publico: detrás de un proxy con HTTPS, en internet."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.TemporaryDirectory()
+        cls.bd = BaseDatos(cls.dir.name)
+        cls.servidor = crear_servidor("127.0.0.1", 0, cls.bd, publico=True)
+        with redirect_stdout(io.StringIO()) as cls.salida:
+            preparar_datos(cls.bd, con_ejemplos=True, publico=True)
+        cls.url = f"http://127.0.0.1:{cls.servidor.server_port}"
+        threading.Thread(target=cls.servidor.serve_forever, daemon=True).start()
+        cls.ruta_credenciales = Path(cls.dir.name) / FICHERO_CREDENCIALES
+        cls.credenciales = dict(linea.split() for linea in cls.ruta_credenciales.read_text().splitlines())
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.servidor.shutdown()
+        cls.servidor.server_close()
+        cls.bd.cerrar()
+        cls.dir.cleanup()
+
+    def setUp(self):
+        cuentas._fallos.clear()
+
+    def entrar(self, usuario, contrasena, cabeceras=None):
+        peticion = urllib.request.Request(
+            self.url + "/api/sesion", method="POST",
+            headers={"Content-Type": "application/json", **(cabeceras or {})},
+            data=json.dumps({"usuario": usuario, "contrasena": contrasena}).encode(),
+        )
+        try:
+            with urllib.request.urlopen(peticion) as r:
+                return r.status, r.headers["Set-Cookie"]
+        except urllib.error.HTTPError as error:
+            return error.code, None
+
+    def test_la_pantalla_de_acceso_no_ensena_usuarios(self):
+        with urllib.request.urlopen(self.url + "/api/sesion") as r:
+            self.assertEqual(json.loads(r.read())["usuarios_ejemplo"], [])
+
+    def test_sin_demostracion_no_existe_el_visitante(self):
+        self.assertEqual(self.entrar(cuentas.USUARIO_DEMO, cuentas.CONTRASENA_DEMO)[0], 401)
+
+    def test_las_contrasenas_de_ejemplo_no_valen(self):
+        for usuario, _, contrasena, _ in USUARIOS_EJEMPLO:
+            self.assertEqual(self.entrar(usuario, contrasena)[0], 401)
+
+    def test_las_contrasenas_generadas_si_y_la_cookie_es_secure(self):
+        estado, cookie = self.entrar("laura", self.credenciales["laura"])
+        self.assertEqual(estado, 200)
+        self.assertIn("Secure", cookie)
+
+    def test_las_contrasenas_no_salen_por_la_consola_y_el_fichero_es_privado(self):
+        for contrasena in self.credenciales.values():
+            self.assertNotIn(contrasena, self.salida.getvalue())
+        self.assertEqual(self.ruta_credenciales.stat().st_mode & 0o777, 0o600)
+
+    def test_la_ip_es_la_que_anade_el_proxy_no_la_que_escribe_el_cliente(self):
+        for n in range(cuentas.MAX_FALLOS_IP):
+            # El cliente cambia su X-Forwarded-For; el proxy añade siempre la real al final
+            cabecera = {"X-Forwarded-For": f"10.0.0.{n}, 198.51.100.7"}
+            self.assertEqual(self.entrar(f"nadie{n}", "x", cabecera)[0], 401)
+        self.assertEqual(self.entrar("laura", self.credenciales["laura"], {"X-Forwarded-For": "1.1.1.1, 198.51.100.7"})[0], 429)
+        self.assertEqual(self.entrar("laura", self.credenciales["laura"], {"X-Forwarded-For": "198.51.100.8"})[0], 200)
+
+
+class DemostracionTest(unittest.TestCase):
+    """--demostracion: usuario visitante a la vista, con cambios limitados y datos restablecidos cada noche."""
+
+    def setUp(self):
+        cuentas._fallos.clear()
+        cuentas._cambios_demo.clear()
+        self.dir = tempfile.TemporaryDirectory()
+        self.bd = BaseDatos(self.dir.name)
+        self.servidor = crear_servidor("127.0.0.1", 0, self.bd, publico=True, demostracion=True)
+        with redirect_stdout(io.StringIO()):
+            preparar_datos(self.bd, con_ejemplos=True, publico=True)
+        with self.bd.conexion() as conexion:
+            CuentasServicio(conexion).asegurar_usuario_demo()
+            CuentasServicio(conexion).asegurar_usuario_demo()  # en cada arranque: no debe fallar
+        self.url = f"http://127.0.0.1:{self.servidor.server_port}"
+        threading.Thread(target=self.servidor.serve_forever, daemon=True).start()
+        self.cookie = self.entrar()[1]
+        self.producto = self.pedir("GET", "/api/productos")[1][0]
+
+    def tearDown(self):
+        self.servidor.shutdown()
+        self.servidor.server_close()
+        self.bd.cerrar()
+        self.dir.cleanup()
+
+    def pedir(self, metodo, ruta, cuerpo=None, cabeceras=None):
+        peticion = urllib.request.Request(
+            self.url + ruta, method=metodo, data=json.dumps(cuerpo).encode() if cuerpo is not None else None,
+            headers={"Content-Type": "application/json", "Cookie": getattr(self, "cookie", "") or "", **(cabeceras or {})},
+        )
+        try:
+            with urllib.request.urlopen(peticion) as r:
+                contenido = r.read()
+                self.ultima_cookie = r.headers["Set-Cookie"]
+                return r.status, json.loads(contenido) if contenido else None
+        except urllib.error.HTTPError as error:
+            return error.code, json.loads(error.read())
+
+    def entrar(self, contrasena=cuentas.CONTRASENA_DEMO, cabeceras=None):
+        estado, cuerpo = self.pedir("POST", "/api/sesion", {"usuario": cuentas.USUARIO_DEMO, "contrasena": contrasena}, cabeceras)
+        return estado, self.ultima_cookie.split(";")[0] if estado == 200 else None, cuerpo
+
+    def movimiento(self, **campos):
+        return {"producto_id": self.producto["id"], "tipo": "ENTRADA", "cantidad": 1, "motivo": "Venta", **campos}
+
+    def test_la_pantalla_de_acceso_ensena_solo_al_visitante(self):
+        self.cookie = None
+        ejemplos = self.pedir("GET", "/api/sesion")[1]["usuarios_ejemplo"]
+        self.assertEqual([c["usuario"] for c in ejemplos], [cuentas.USUARIO_DEMO])
+        self.assertTrue(ejemplos[0]["demo"])
+
+    def test_con_sesion_no_se_ofrece_ningun_usuario(self):
+        estado, sesion = self.pedir("GET", "/api/sesion")
+        self.assertEqual(estado, 200)
+        self.assertTrue(sesion["usuario"]["demo"])
+        self.assertEqual(sesion["usuarios_ejemplo"], [])
+
+    def test_el_visitante_no_toca_las_referencias(self):
+        ruta = f"/api/productos/{self.producto['id']}"
+        self.assertEqual(self.pedir("POST", "/api/productos", {"codigo": "X-1", "nombre": "X", "precio": "1"})[0], 403)
+        self.assertEqual(self.pedir("PUT", ruta, {"nombre": "Otra cosa"})[0], 403)
+        self.assertEqual(self.pedir("DELETE", ruta)[0], 403)
+
+    def test_el_visitante_registra_movimientos_con_los_conceptos_propuestos(self):
+        for motivo in sorted(MOTIVOS_DEMO):
+            self.assertEqual(self.pedir("POST", "/api/movimientos", self.movimiento(motivo=motivo))[0], 201, motivo)
+
+    def test_los_conceptos_son_los_que_propone_el_albaran(self):
+        app_js = (Path(__file__).parent.parent / "static" / "js" / "app.js").read_text(encoding="utf-8")
+        for motivo in MOTIVOS_DEMO - {""}:
+            self.assertIn(f"'{motivo}'", app_js)
+
+    def test_el_visitante_no_escribe_texto_libre(self):
+        estado, error = self.pedir("POST", "/api/movimientos", self.movimiento(motivo="Visita mi web"))
+        self.assertEqual(estado, 400)
+        self.assertEqual(error["campo"], "motivo")
+
+    def test_el_visitante_tiene_un_tope_de_cantidad(self):
+        self.assertEqual(self.pedir("POST", "/api/movimientos", self.movimiento(cantidad=500))[0], 201)
+        estado, error = self.pedir("POST", "/api/movimientos", self.movimiento(cantidad=501))
+        self.assertEqual(estado, 400)
+        self.assertEqual(error["campo"], "cantidad")
+
+    def test_el_visitante_tiene_un_limite_de_cambios(self):
+        cabeceras = {"X-Forwarded-For": "198.51.100.20"}
+        for _ in range(cuentas.MAX_CAMBIOS_DEMO_IP):
+            self.assertEqual(self.pedir("POST", "/api/movimientos", self.movimiento(), cabeceras)[0], 201)
+        self.assertEqual(self.pedir("POST", "/api/movimientos", self.movimiento(), cabeceras)[0], 429)
+        # Otra persona sigue pudiendo
+        self.assertEqual(self.pedir("POST", "/api/movimientos", self.movimiento(), {"X-Forwarded-For": "198.51.100.21"})[0], 201)
+
+    def test_entrar_una_y_otra_vez_tambien_cuenta(self):
+        cabeceras = {"X-Forwarded-For": "198.51.100.30"}
+        for _ in range(cuentas.MAX_CAMBIOS_DEMO_IP):
+            self.assertEqual(self.entrar(cabeceras=cabeceras)[0], 200)
+        self.assertEqual(self.entrar(cabeceras=cabeceras)[0], 429)
+
+    def test_nadie_bloquea_al_visitante_fallando_su_contrasena(self):
+        for numero in range(cuentas.MAX_FALLOS + 1):
+            self.assertEqual(self.entrar("mala", {"X-Forwarded-For": f"198.51.100.{numero + 40}"})[0], 401)
+        self.assertEqual(self.entrar(cabeceras={"X-Forwarded-For": "198.51.100.99"})[0], 200)
+
+    def test_restablecer_deja_el_material_como_nuevo_y_conserva_usuarios_y_sesiones(self):
+        with self.bd.conexion() as conexion:
+            inventario = InventarioServicio(conexion)
+            referencias = len(inventario.listar_productos())
+            movimientos = conexion.valor("buscar movimientos mostrar contar()")
+        self.assertEqual(self.pedir("POST", "/api/movimientos", self.movimiento(cantidad=500))[0], 201)
+
+        demo.restablecer_demo(self.bd)
+
+        with self.bd.conexion() as conexion:
+            inventario = InventarioServicio(conexion)
+            self.assertEqual(len(inventario.listar_productos()), referencias)
+            self.assertEqual(conexion.valor("buscar movimientos mostrar contar()"), movimientos)
+            self.assertEqual(MovimientoDAO(conexion).descuadres(), [])
+        # La misma sesión sigue valiendo; laura y diego siguen existiendo
+        self.assertEqual(self.pedir("GET", "/api/sesion")[1]["usuario"]["usuario"], cuentas.USUARIO_DEMO)
+        with self.bd.conexion() as conexion:
+            for usuario, *_ in USUARIOS_EJEMPLO:
+                self.assertIsNotNone(CuentasServicio(conexion).usuarios.por_usuario(usuario))
+
+    def test_restablecer_es_todo_o_nada(self):
+        with self.bd.conexion() as conexion:
+            antes = conexion.valor("buscar movimientos mostrar contar()")
+        with mock.patch.object(demo, "_cargar_referencias", side_effect=RuntimeError("a medias")):
+            with self.assertRaises(RuntimeError):
+                demo.restablecer_demo(self.bd)
+        with self.bd.conexion() as conexion:
+            self.assertEqual(conexion.valor("buscar movimientos mostrar contar()"), antes)
+
+    def test_restablecer_no_engorda_la_auditoria(self):
+        carpeta = Path(self.dir.name) / ".auditoria"
+        tamano = lambda: sum(f.stat().st_size for f in carpeta.rglob("*") if f.is_file())
+        antes = tamano()
+        demo.restablecer_demo(self.bd)
+        self.assertLess(tamano() - antes, 2_000)
+
+    def test_se_restablece_una_vez_al_dia_a_partir_de_la_hora(self):
+        hoy = datetime.now().replace(hour=demo.HORA_RESTABLECIMIENTO, minute=0)
+        self.assertFalse(demo.toca_restablecer(self.bd, hoy.replace(hour=demo.HORA_RESTABLECIMIENTO - 1)))
+        self.assertTrue(demo.toca_restablecer(self.bd, hoy))
+        demo.restablecer_demo(self.bd)
+        self.assertFalse(demo.toca_restablecer(self.bd, hoy))
 
 
 if __name__ == "__main__":

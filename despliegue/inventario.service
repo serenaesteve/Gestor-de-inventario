@@ -1,0 +1,25 @@
+[Unit]
+Description=Gestor de inventario (sobre SBD)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=inventario
+WorkingDirectory=/srv/inventario/app
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /srv/inventario/app/app.py --publico --demostracion --host 127.0.0.1 --puerto 8095 --datos /srv/inventario/datos
+Restart=on-failure
+RestartSec=3
+# Al pararse, SBD deshace lo no confirmado y compacta su diario
+KillSignal=SIGINT
+TimeoutStopSec=30
+# Endurecimiento: solo puede escribir en su carpeta de datos
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/inventario/datos
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
